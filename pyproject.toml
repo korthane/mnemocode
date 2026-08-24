@@ -1,0 +1,23 @@
+[project]
+name = "mnemocode"
+version = "0.1.0"
+description = "Encode a hex-encoded key into a BIP-39 mnemonic phrase"
+authors = [
+    { name = "Oleg Lomaka", email = "oleg.lomaka@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+mnemocode = "mnemocode.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# Explicit so english.txt is packaged alongside the .py files.
+[tool.hatch.build.targets.wheel]
+packages = ["src/mnemocode"]
