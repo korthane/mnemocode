@@ -24,3 +24,12 @@ def load_words() -> tuple[str, ...]:
             f"corrupt wordlist: expected {WORDLIST_SIZE} words, got {len(words)}"
         )
     return words
+
+
+@cache
+def word_index() -> dict[str, int]:
+    """Return a word -> index lookup, the inverse of load_words().
+
+    Cached and shared between callers; treat it as read-only.
+    """
+    return {word: index for index, word in enumerate(load_words())}

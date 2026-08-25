@@ -1,6 +1,6 @@
 import pytest
 
-from mnemocode.bip39 import entropy_to_mnemonic
+from mnemocode.bip39 import entropy_to_mnemonic, mnemonic_to_entropy
 
 # Official BIP-39 English vectors from trezor/python-mnemonic vectors.json.
 # The set covers 128/192/256 bits only; 160 and 224 have no official vectors.
@@ -28,3 +28,42 @@ def test_word_count_per_entropy_size(n_bytes, n_words):
 def test_rejects_unsupported_entropy_size(n_bytes):
     with pytest.raises(ValueError):
         entropy_to_mnemonic(bytes(n_bytes))
+
+
+@pytest.mark.parametrize("entropy_hex,mnemonic", VECTORS)
+def test_official_vectors_decode(entropy_hex, mnemonic):
+    assert mnemonic_to_entropy(mnemonic.split()) == bytes.fromhex(entropy_hex)
+
+
+@pytest.mark.parametrize("n_bytes", [16, 20, 24, 28, 32])
+def test_round_trip(n_bytes):
+    entropy = bytes(range(1, n_bytes + 1))
+    assert mnemonic_to_entropy(entropy_to_mnemonic(entropy)) == entropy
+
+
+def test_leading_zero_bytes_survive_round_trip():
+    entropy = bytes(15) + b"\x01"
+    assert mnemonic_to_entropy(entropy_to_mnemonic(entropy)) == entropy
+
+
+def test_accepts_mixed_case():
+    words = "Abandon ABANDON abandon abandon abandon abandon abandon abandon abandon abandon abandon About"
+    assert mnemonic_to_entropy(words.split()) == bytes(16)
+
+
+def test_rejects_bad_checksum():
+    # Valid words, but all-zero entropy checksums to "about", not "abandon".
+    with pytest.raises(ValueError, match="checksum"):
+        mnemonic_to_entropy(["abandon"] * 12)
+
+
+def test_rejects_unknown_word():
+    words = ["abandon"] * 11 + ["mnemocode"]
+    with pytest.raises(ValueError, match="word 12"):
+        mnemonic_to_entropy(words)
+
+
+@pytest.mark.parametrize("n_words", [0, 11, 13, 23, 25])
+def test_rejects_unsupported_word_count(n_words):
+    with pytest.raises(ValueError, match="must be 12"):
+        mnemonic_to_entropy(["abandon"] * n_words)

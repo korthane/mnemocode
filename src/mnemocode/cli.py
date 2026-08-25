@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from . import __version__
-from .bip39 import VALID_ENTROPY_BYTES, entropy_to_mnemonic
+from .bip39 import VALID_ENTROPY_BYTES, entropy_to_mnemonic, mnemonic_to_entropy
 
 
 def parse_key(text: str) -> bytes:
@@ -26,26 +26,59 @@ def parse_key(text: str) -> bytes:
     return key
 
 
+def run_encode(args: argparse.Namespace) -> int:
+    print(" ".join(entropy_to_mnemonic(args.key)))
+    return 0
+
+
+def run_decode(args: argparse.Namespace) -> int:
+    # Re-split so a single quoted phrase and separate word arguments both work.
+    words = " ".join(args.words).split()
+    print(mnemonic_to_entropy(words).hex())
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mnemocode",
-        description="Encode a hex-encoded key into a BIP-39 mnemonic phrase.",
-    )
-    parser.add_argument(
-        "key",
-        type=parse_key,
-        help="hex-encoded key, 128 to 256 bits (32 to 64 hex chars)",
+        description="Convert between a hex-encoded key and a BIP-39 mnemonic phrase.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
     )
+    subcommands = parser.add_subparsers(dest="command", required=True)
+
+    encode = subcommands.add_parser(
+        "encode", help="encode a hex key into a mnemonic phrase"
+    )
+    encode.add_argument(
+        "key",
+        type=parse_key,
+        help="hex-encoded key, 128 to 256 bits (32 to 64 hex chars)",
+    )
+    encode.set_defaults(run=run_encode)
+
+    decode = subcommands.add_parser(
+        "decode", help="recover the hex key from a mnemonic phrase"
+    )
+    decode.add_argument(
+        "words",
+        nargs="+",
+        metavar="WORD",
+        help="the mnemonic, as separate words or one quoted phrase",
+    )
+    decode.set_defaults(run=run_decode)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    print(" ".join(entropy_to_mnemonic(args.key)))
-    return 0
+    try:
+        return args.run(args)
+    except ValueError as exc:
+        print(f"mnemocode: error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

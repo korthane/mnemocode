@@ -1,12 +1,19 @@
 # mnemocode
 
-Encodes a hex-encoded binary key (128 to 256 bits) into a word mnemonic
-according to [BIP-39][bip39], using the official English wordlist.
+Converts a hex-encoded binary key (128 to 256 bits) to and from a word
+mnemonic according to [BIP-39][bip39], using the official English wordlist.
 
 ```
-$ mnemocode 0c1e24e5917779d297e14d45f14e1a1a
+$ mnemocode encode 0c1e24e5917779d297e14d45f14e1a1a
 army van defense carry jealous true garbage claim echo media make crunch
+
+$ mnemocode decode army van defense carry jealous true garbage claim echo media make crunch
+0c1e24e5917779d297e14d45f14e1a1a
 ```
+
+`decode` takes the words as separate arguments or as one quoted phrase, in
+any case. It verifies the BIP-39 checksum and exits non-zero on a mismatch,
+so a mistyped word is reported rather than silently decoded to the wrong key.
 
 ## Key sizes
 
@@ -20,21 +27,22 @@ BIP-39 accepts entropy in multiples of 32 bits, between 128 and 256:
 |      224 |        56 |    21 |
 |      256 |        64 |    24 |
 
-An optional `0x` prefix is accepted. Any other length is rejected.
+An optional `0x` prefix is accepted on input; `decode` prints lowercase hex
+without one. Any other length is rejected, in either direction.
 
 ## Running it
 
 Local checkout:
 
 ```sh
-uv run mnemocode <key>
+uv run mnemocode encode <key>
 ```
 
 From GitHub, without cloning:
 
 ```sh
-uvx --from git+https://github.com/korthane/mnemocode mnemocode <key>
-uv run https://raw.githubusercontent.com/korthane/mnemocode/main/main.py <key>
+uvx --from git+https://github.com/korthane/mnemocode mnemocode encode <key>
+uv run https://raw.githubusercontent.com/korthane/mnemocode/main/main.py encode <key>
 ```
 
 Both install the package into a temporary environment, so the bundled
