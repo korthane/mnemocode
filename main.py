@@ -5,7 +5,7 @@
 # ///
 """Bootstrap so the tool runs straight from its raw URL.
 
-    uv run https://raw.githubusercontent.com/korthane/mnemocode/main/main.py <key>
+    uv run https://raw.githubusercontent.com/korthane/mnemocode/main/main.py encode KEY
 
 uv installs the package named above, so `english.txt` and every module come
 along. Local development uses `uv run mnemocode` instead; this shim always

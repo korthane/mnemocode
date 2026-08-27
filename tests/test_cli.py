@@ -1,5 +1,6 @@
 import pytest
 
+from mnemocode.bech32 import bech32_encode
 from mnemocode.bip39 import entropy_to_mnemonic
 from mnemocode.cli import build_parser, main, parse_hex_key
 
@@ -9,6 +10,7 @@ ZEROS_12 = "abandon " * 11 + "about"
 def test_parses_hex_with_and_without_prefix():
     assert parse_hex_key("00" * 16) == bytes(16)
     assert parse_hex_key("0x" + "00" * 32) == bytes(32)
+    assert parse_hex_key("0X" + "00" * 32) == bytes(32)
 
 
 @pytest.mark.parametrize("bad", ["zz" * 16, "00" * 15, "00" * 33, ""])
@@ -88,10 +90,12 @@ def test_decode_defaults_to_hex(capsys):
 
 
 @pytest.mark.parametrize("command", ["encode", "decode"])
-def test_rejects_an_unknown_format(command):
+def test_rejects_an_unknown_format(command, capsys):
     with pytest.raises(SystemExit) as exc:
         main([command, "--format", "base64", "whatever"])
     assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "hex" in err and "age" in err
 
 
 @pytest.mark.parametrize("n_bytes", [16, 20, 24, 28])
@@ -110,6 +114,7 @@ def test_decode_age_requires_twenty_four_words(n_bytes, capsys):
         IDENTITY[:-1] + IDENTITY[-1].lower(),  # mixed case
         "age13aqvttdk3ujkyjh9kg2w5an6dmy5mq5a84a4uxk3hfhnugfc9p0sy5p2wh",  # public
         "00" * 32,  # hex, not an identity
+        bech32_encode("age-secret-key-", bytes(31)).upper(),  # right HRP, 31 bytes
     ],
 )
 def test_encode_age_reports_a_bad_key_without_traceback(key, capsys):
@@ -124,6 +129,15 @@ def test_encode_hex_rejects_an_identity(capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err != ""
+    # The key is secret material; it must not reach stderr, logs or scrollback.
+    assert IDENTITY not in captured.err
+
+
+def test_age_and_hex_encode_the_same_key_identically(capsys):
+    assert main(["encode", "--format", "age", IDENTITY]) == 0
+    from_age = capsys.readouterr().out
+    assert main(["encode", "--format", "hex", bytes(range(32)).hex()]) == 0
+    assert capsys.readouterr().out == from_age
 
 
 @pytest.mark.parametrize("bad", ["zz" * 16, "00" * 15, "00" * 33, ""])

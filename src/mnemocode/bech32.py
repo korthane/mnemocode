@@ -120,10 +120,16 @@ def bech32_decode(text: str) -> tuple[str, bytes]:
         The lowercased human-readable part and the decoded payload.
 
     Raises:
-        ValueError: on mixed case, an over-long string, a missing separator, an
-            empty or out-of-range HRP, an invalid data character, a payload
-            whose padding is wrong, or a checksum that does not match.
+        ValueError: on a non-ASCII or out-of-range character, mixed case, an
+            over-long string, a missing separator, an empty HRP, an invalid
+            data character, a payload whose padding is wrong, or a checksum
+            that does not match.
     """
+    # Check the raw text: U+212A lowercases to "k" and uppercases to itself,
+    # so a homoglyph would survive the case and charset checks below.
+    for char in text:
+        if not 33 <= ord(char) <= 126:
+            raise ValueError(f"bech32 string has a character out of range: {char!r}")
     if len(text) > MAX_LENGTH:
         raise ValueError(
             f"bech32 string is {len(text)} characters; max is {MAX_LENGTH}"

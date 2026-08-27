@@ -1,10 +1,6 @@
 import pytest
 
-from mnemocode.agekey import (
-    AGE_SECRET_KEY_BYTES,
-    format_age_secret_key,
-    parse_age_secret_key,
-)
+from mnemocode.agekey import format_age_secret_key, parse_age_secret_key
 from mnemocode.bech32 import bech32_encode
 
 # A synthetic key, not one from age-keygen: a real private key in the tree
@@ -70,5 +66,13 @@ def test_rejects_text_that_is_not_bech32_at_all():
         parse_age_secret_key("not a key")
 
 
-def test_exports_the_key_size():
-    assert AGE_SECRET_KEY_BYTES == 32
+def test_accepts_surrounding_whitespace():
+    """An identity pasted out of a key file carries a trailing newline."""
+    assert parse_age_secret_key(f"  {IDENTITY}\n") == KEY
+
+
+def test_rejects_a_unicode_homoglyph():
+    """U+212A lowercases to "k", so folding alone would let it through."""
+    homoglyph = IDENTITY.replace("K", "\u212a", 1)
+    with pytest.raises(ValueError, match="out of range"):
+        parse_age_secret_key(homoglyph)

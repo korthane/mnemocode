@@ -14,34 +14,43 @@ VALID = [
     "?1ezyfcl",
 ]
 
+# Each entry pairs a vector with the message fragment it must be rejected by,
+# so a vector caught for an unrelated reason fails the test.
 INVALID = [
-    ("\x201nwldj5", "HRP character out of range"),
-    ("\x7f1axkwrx", "HRP character out of range"),
-    ("\x801eym55h", "HRP character out of range"),
+    ("\x201nwldj5", "HRP character out of range", "out of range"),
+    ("\x7f1axkwrx", "HRP character out of range", "out of range"),
+    ("\x801eym55h", "HRP character out of range", "out of range"),
     (
         "an84characterslonghumanreadablepartthatcontainsthenumber1andtheexcludedcharactersbio1569pvx",
         "overall max length exceeded",
+        "max is 90",
     ),
-    ("pzry9x0s0muk", "no separator character"),
-    ("1pzry9x0s0muk", "empty HRP"),
-    ("x1b4n0q5v", "invalid data character"),
-    ("li1dgmt3", "too short checksum"),
-    ("de1lg7wt\xff", "invalid character in checksum"),
-    ("A1G7SGD8", "checksum calculated with uppercase form of HRP"),
-    ("10a06t8", "empty HRP"),
-    ("1qzzfhee", "empty HRP"),
-    ("bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5", "invalid checksum"),
+    ("pzry9x0s0muk", "no separator character", "no '1' separator"),
+    ("1pzry9x0s0muk", "empty HRP", "empty human-readable part"),
+    ("x1b4n0q5v", "invalid data character", "not a bech32 data character"),
+    ("li1dgmt3", "too short checksum", "character checksum"),
+    ("de1lg7wt\xff", "invalid character in checksum", "out of range"),
+    ("A1G7SGD8", "checksum calculated with uppercase form of HRP", "checksum"),
+    ("10a06t8", "empty HRP", "empty human-readable part"),
+    ("1qzzfhee", "empty HRP", "empty human-readable part"),
+    (
+        "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t5",
+        "invalid checksum",
+        "checksum does not match",
+    ),
     (
         "tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3q0sL5k7",
         "mixed case",
+        "mixes upper and lower case",
     ),
     # The two below are listed in BIP-173 as invalid segwit addresses. Their
     # padding is what makes them invalid at the plain Bech32 layer too: the
     # first leaves 7 bits over, the second leaves a non-zero bit.
-    ("bc1rw5uspcuh", "more than 4 bits of padding"),
+    ("bc1rw5uspcuh", "more than 4 bits of padding", "bits of padding"),
     (
         "tb1qrp33g0q5c5txsp9arysrx4k6zdkfs4nce4xj0gdcccefvpysxf3pjxtptv",
         "non-zero padding in the 8-to-5 conversion",
+        "padding bits are not zero",
     ),
 ]
 
@@ -59,10 +68,18 @@ def test_spec_vectors_round_trip(text):
     assert bech32_encode(hrp, payload) == text.lower()
 
 
-@pytest.mark.parametrize("text,reason", INVALID, ids=[r for _, r in INVALID])
-def test_rejects_the_spec_vectors(text, reason):
-    with pytest.raises(ValueError):
+@pytest.mark.parametrize(
+    "text,message", [(t, m) for t, _, m in INVALID], ids=[r for _, r, _ in INVALID]
+)
+def test_rejects_the_spec_vectors(text, message):
+    with pytest.raises(ValueError, match=message):
         bech32_decode(text)
+
+
+def test_rejects_a_non_ascii_character_that_folds_onto_the_charset():
+    """U+212A lowercases to "k" and uppercases to itself, passing both folds."""
+    with pytest.raises(ValueError, match="out of range"):
+        bech32_decode("\u212a18DUSE0")
 
 
 def test_case_is_folded_but_not_mixed():
@@ -92,6 +109,13 @@ def test_encode_rejects_an_empty_hrp():
         bech32_encode("", b"")
 
 
+def test_encode_rejects_an_uppercase_hrp():
+    # The checksum is defined over the lowercase HRP, so encoding under an
+    # uppercase one would emit a string bech32_decode rejects.
+    with pytest.raises(ValueError, match="lowercase"):
+        bech32_encode("A", b"")
+
+
 def test_encode_rejects_a_string_over_the_length_limit():
     with pytest.raises(ValueError):
         bech32_encode("hrp", bytes(64))
@@ -111,6 +135,12 @@ def test_convertbits_rejects_more_than_four_leftover_bits():
     assert convertbits([0] * 8, 5, 8, pad=False) == [0] * 5
     with pytest.raises(ValueError):
         convertbits([0] * 3, 5, 8, pad=False)
+
+
+@pytest.mark.parametrize("value", [-1, 32])
+def test_convertbits_rejects_a_value_too_wide_for_from_bits(value):
+    with pytest.raises(ValueError, match="does not fit"):
+        convertbits([value], 5, 8, pad=False)
 
 
 def test_convertbits_rejects_non_zero_padding():

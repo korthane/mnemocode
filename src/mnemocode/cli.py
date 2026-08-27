@@ -23,7 +23,7 @@ def parse_hex_key(text: str) -> bytes:
     try:
         key = bytes.fromhex(cleaned)
     except ValueError:
-        raise ValueError(f"not valid hex: {text!r}") from None
+        raise ValueError("key is not valid hex") from None
     if len(key) not in VALID_ENTROPY_BYTES:
         allowed = ", ".join(str(n * 8) for n in VALID_ENTROPY_BYTES)
         raise ValueError(f"key is {len(key) * 8} bits; must be one of {allowed}")
@@ -54,10 +54,12 @@ def run_decode(args: argparse.Namespace) -> int:
     return 0
 
 
-def add_format_option(parser: argparse.ArgumentParser) -> None:
+def add_format_option(
+    parser: argparse.ArgumentParser, formats: dict[str, object]
+) -> None:
     parser.add_argument(
         "--format",
-        choices=tuple(KEY_PARSERS),
+        choices=tuple(formats),
         default="hex",
         help="key encoding: hex (the default), or age for an "
         "AGE-SECRET-KEY-1... identity",
@@ -77,17 +79,18 @@ def build_parser() -> argparse.ArgumentParser:
     encode = subcommands.add_parser(
         "encode", help="encode a key into a mnemonic phrase"
     )
-    add_format_option(encode)
+    add_format_option(encode, KEY_PARSERS)
     encode.add_argument(
         "key",
-        help="the key to encode, in the --format encoding",
+        help="the key to encode, in the --format encoding; hex is "
+        "128 to 256 bits (32 to 64 hex chars)",
     )
     encode.set_defaults(run=run_encode)
 
     decode = subcommands.add_parser(
         "decode", help="recover the key from a mnemonic phrase"
     )
-    add_format_option(decode)
+    add_format_option(decode, KEY_FORMATTERS)
     decode.add_argument(
         "words",
         nargs="+",
