@@ -1,7 +1,7 @@
 [project]
 name = "mnemocode"
 version = "0.1.0"
-description = "Encode a hex-encoded key into a BIP-39 mnemonic phrase"
+description = "Convert a key to and from a BIP-39 mnemonic phrase"
 authors = [
     { name = "Oleg Lomaka", email = "oleg.lomaka@gmail.com" }
 ]
