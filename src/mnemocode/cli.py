@@ -4,44 +4,70 @@ import argparse
 import sys
 
 from . import __version__
+from .agekey import format_age_secret_key, parse_age_secret_key
 from .bip39 import VALID_ENTROPY_BYTES, entropy_to_mnemonic, mnemonic_to_entropy
 
+AGE_WORD_COUNT = 24
 
-def parse_key(text: str) -> bytes:
+
+def parse_hex_key(text: str) -> bytes:
     """Parse a hex-encoded key of a BIP-39 entropy size.
 
+    Args:
+        text: hex digits, with or without a leading 0x.
+
     Raises:
-        argparse.ArgumentTypeError: on non-hex input or an unsupported length.
+        ValueError: on non-hex input or an unsupported length.
     """
     cleaned = text.removeprefix("0x").removeprefix("0X")
     try:
         key = bytes.fromhex(cleaned)
     except ValueError:
-        raise argparse.ArgumentTypeError(f"not valid hex: {text!r}") from None
+        raise ValueError(f"not valid hex: {text!r}") from None
     if len(key) not in VALID_ENTROPY_BYTES:
         allowed = ", ".join(str(n * 8) for n in VALID_ENTROPY_BYTES)
-        raise argparse.ArgumentTypeError(
-            f"key is {len(key) * 8} bits; must be one of {allowed}"
-        )
+        raise ValueError(f"key is {len(key) * 8} bits; must be one of {allowed}")
     return key
 
 
+KEY_PARSERS = {"hex": parse_hex_key, "age": parse_age_secret_key}
+KEY_FORMATTERS = {"hex": bytes.hex, "age": format_age_secret_key}
+
+
 def run_encode(args: argparse.Namespace) -> int:
-    print(" ".join(entropy_to_mnemonic(args.key)))
+    # Parsed here rather than in an argparse type= hook, which argparse applies
+    # while parsing, before --format is known.
+    key = KEY_PARSERS[args.format](args.key)
+    print(" ".join(entropy_to_mnemonic(key)))
     return 0
 
 
 def run_decode(args: argparse.Namespace) -> int:
     # Re-split so a single quoted phrase and separate word arguments both work.
     words = " ".join(args.words).split()
-    print(mnemonic_to_entropy(words).hex())
+    if args.format == "age" and len(words) != AGE_WORD_COUNT:
+        raise ValueError(
+            f"an age key is always {AGE_WORD_COUNT} words; this mnemonic has "
+            f"{len(words)}"
+        )
+    print(KEY_FORMATTERS[args.format](mnemonic_to_entropy(words)))
     return 0
+
+
+def add_format_option(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--format",
+        choices=tuple(KEY_PARSERS),
+        default="hex",
+        help="key encoding: hex (the default), or age for an "
+        "AGE-SECRET-KEY-1... identity",
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mnemocode",
-        description="Convert between a hex-encoded key and a BIP-39 mnemonic phrase.",
+        description="Convert between a key and a BIP-39 mnemonic phrase.",
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
@@ -49,18 +75,19 @@ def build_parser() -> argparse.ArgumentParser:
     subcommands = parser.add_subparsers(dest="command", required=True)
 
     encode = subcommands.add_parser(
-        "encode", help="encode a hex key into a mnemonic phrase"
+        "encode", help="encode a key into a mnemonic phrase"
     )
+    add_format_option(encode)
     encode.add_argument(
         "key",
-        type=parse_key,
-        help="hex-encoded key, 128 to 256 bits (32 to 64 hex chars)",
+        help="the key to encode, in the --format encoding",
     )
     encode.set_defaults(run=run_encode)
 
     decode = subcommands.add_parser(
-        "decode", help="recover the hex key from a mnemonic phrase"
+        "decode", help="recover the key from a mnemonic phrase"
     )
+    add_format_option(decode)
     decode.add_argument(
         "words",
         nargs="+",
