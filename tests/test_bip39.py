@@ -58,9 +58,11 @@ def test_rejects_bad_checksum():
 
 
 def test_rejects_unknown_word():
-    words = ["abandon"] * 11 + ["mnemocode"]
-    with pytest.raises(ValueError, match="word 12"):
+    words = ["abandon"] * 11 + ["zzzz"]
+    with pytest.raises(ValueError, match="word 12") as exc:
         mnemonic_to_entropy(words)
+    # The word is secret material; only its position may be reported.
+    assert "zzzz" not in str(exc.value)
 
 
 @pytest.mark.parametrize("n_words", [0, 11, 13, 23, 25])

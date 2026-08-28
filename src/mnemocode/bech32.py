@@ -48,9 +48,9 @@ def convertbits(
         data: values, each below ``2 ** from_bits``.
         from_bits: width of each input value.
         to_bits: width of each output value.
-        pad: when regrouping into wider values the tail rarely lands on a
-            boundary. True pads it with zero bits; False requires the tail to
-            be zero bits alone, which is what decoding demands.
+        pad: the tail rarely lands on a boundary in either direction. True
+            pads it with zero bits, which is what encoding needs; False
+            requires the tail to be zero bits alone, which decoding demands.
 
     Raises:
         ValueError: on a value too wide for from_bits, or, when pad is False,
@@ -60,10 +60,14 @@ def convertbits(
     bits = 0
     result = []
     max_value = (1 << to_bits) - 1
+    # Bound the accumulator as BIP-173's reference does: unmasked it grows as
+    # wide as the whole input, making every shift O(n) and the loop O(n**2).
+    # from_bits + to_bits - 1 is the most bits any single read below needs.
+    max_accumulator = (1 << (from_bits + to_bits - 1)) - 1
     for value in data:
         if value < 0 or value >> from_bits:
             raise ValueError(f"value {value} does not fit in {from_bits} bits")
-        accumulator = (accumulator << from_bits) | value
+        accumulator = ((accumulator << from_bits) | value) & max_accumulator
         bits += from_bits
         while bits >= to_bits:
             bits -= to_bits
@@ -148,8 +152,8 @@ def bech32_decode(text: str) -> tuple[str, bytes]:
     _validate_hrp(hrp)
     if len(encoded) < CHECKSUM_LENGTH:
         raise ValueError(
-            f"bech32 string has a {len(encoded)}-character checksum; "
-            f"expected {CHECKSUM_LENGTH}"
+            f"bech32 data part is {len(encoded)} characters; "
+            f"needs at least {CHECKSUM_LENGTH} for the checksum"
         )
 
     data = []

@@ -3,9 +3,9 @@ import pytest
 from mnemocode.agekey import format_age_secret_key, parse_age_secret_key
 from mnemocode.bech32 import bech32_encode
 
-# A synthetic key, not one from age-keygen: a real private key in the tree
-# would trip secret scanners. Verified against age itself -- age-keygen -y
-# accepts this identity and derives PUBLIC_KEY from it.
+# A synthetic key, not one from age-keygen: it has the shape of a real identity
+# and trips secret scanners the same way, but decrypts nothing. Verified against
+# age itself -- age-keygen -y accepts it and derives PUBLIC_KEY from it.
 KEY = bytes(range(32))
 IDENTITY = "AGE-SECRET-KEY-1QQQSYQCYQ5RQWZQFPG9SCRGWPUGPZYSNZS23V9CCRYDPK8QARC0SWRYDWG"
 PUBLIC_KEY = "age13aqvttdk3ujkyjh9kg2w5an6dmy5mq5a84a4uxk3hfhnugfc9p0sy5p2wh"
@@ -33,7 +33,7 @@ def test_accepts_lowercase_input():
 
 def test_rejects_mixed_case():
     mixed = IDENTITY[:-1] + IDENTITY[-1].lower()
-    with pytest.raises(ValueError, match="case"):
+    with pytest.raises(ValueError, match="mixes upper and lower case"):
         parse_age_secret_key(mixed)
 
 
@@ -62,7 +62,7 @@ def test_refuses_to_format_a_key_that_is_not_32_bytes(size):
 
 
 def test_rejects_text_that_is_not_bech32_at_all():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="character out of range"):
         parse_age_secret_key("not a key")
 
 

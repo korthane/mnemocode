@@ -33,6 +33,10 @@ def parse_hex_key(text: str) -> bytes:
 KEY_PARSERS = {"hex": parse_hex_key, "age": parse_age_secret_key}
 KEY_FORMATTERS = {"hex": bytes.hex, "age": format_age_secret_key}
 
+# encode parses and decode renders, so both subcommands must offer the same set
+# or a mnemonic could not round trip through the format it came from.
+FORMATS = tuple(KEY_PARSERS)
+
 
 def run_encode(args: argparse.Namespace) -> int:
     # Parsed here rather than in an argparse type= hook, which argparse applies
@@ -54,14 +58,14 @@ def run_decode(args: argparse.Namespace) -> int:
     return 0
 
 
-def add_format_option(
-    parser: argparse.ArgumentParser, formats: dict[str, object]
-) -> None:
+def add_format_option(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--format",
-        choices=tuple(formats),
+        choices=FORMATS,
         default="hex",
-        help="key encoding: hex (the default), or age for an "
+        # Neutral wording: the option names the input on encode and the output
+        # on decode.
+        help="text encoding of the key: hex (the default), or age for an "
         "AGE-SECRET-KEY-1... identity",
     )
 
@@ -79,7 +83,7 @@ def build_parser() -> argparse.ArgumentParser:
     encode = subcommands.add_parser(
         "encode", help="encode a key into a mnemonic phrase"
     )
-    add_format_option(encode, KEY_PARSERS)
+    add_format_option(encode)
     encode.add_argument(
         "key",
         help="the key to encode, in the --format encoding; hex is "
@@ -90,7 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
     decode = subcommands.add_parser(
         "decode", help="recover the key from a mnemonic phrase"
     )
-    add_format_option(decode, KEY_FORMATTERS)
+    add_format_option(decode)
     decode.add_argument(
         "words",
         nargs="+",

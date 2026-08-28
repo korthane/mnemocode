@@ -23,7 +23,9 @@ with a reference implementation. A stock BIP-173 codec is therefore sufficient.
 - Keep `dependencies = []` and the no-install entry point intact.
 - Keep Bech32 generic and free of age knowledge, so it is testable against the
   published BIP-173 vectors rather than only against age keys.
-- Leave `bip39.py` untouched.
+- Leave `bip39.py`'s encoding untouched. (It did gain one message change during
+  review: a rejected word is reported by position rather than echoed, matching
+  the rule that no key or mnemonic text reaches stderr.)
 
 **Non-Goals:**
 
@@ -100,11 +102,13 @@ message naming the 24-word requirement.
   known age identity. The failure mode this guards against — a bad checksum
   accepted — is the one the invalid vectors specifically cover.
 
-- **A real-looking `AGE-SECRET-KEY-…` string committed as a test fixture trips
-  secret scanners**, and looks alarming in a public repository even when
-  throwaway. → Build fixtures from a synthetic deterministic 32-byte pattern
-  rather than `age-keygen` output, and verify the expected string against the
-  real `age` tool once, during implementation, without committing its output.
+- **An `AGE-SECRET-KEY-…` string committed as a test fixture looks alarming in
+  a public repository, and matches a secret scanner's pattern whether or not it
+  is real.** → A fixture is unavoidable, so make it worthless: build it from a
+  synthetic deterministic 32-byte pattern rather than `age-keygen` output, and
+  verify it against the real `age` tool once, during implementation, without
+  committing that tool's output. Scanner hits stay possible and are triaged as
+  false positives.
 
 - **Owning vendored crypto-adjacent code is a maintenance cost.** → Accepted.
   BIP-173 is frozen, the module is small and fully covered by published vectors,
