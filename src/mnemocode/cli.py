@@ -85,11 +85,12 @@ _IGNORED_EXPLICIT = re.compile(r"ignored explicit argument .+", re.DOTALL)
 
 def _redact_argv(message: str) -> str:
     message = _INVALID_CHOICE.sub("invalid choice (choose from", message)
-    # Neutral wording: a leftover argument is as often a stray key or a
-    # misspelled option as it is an unquoted mnemonic.
+    # Conditional, not a rule: decode takes loose words, so "a mnemonic must
+    # be one argument" would be false, and the cause is as often a misspelled
+    # option as an unquoted phrase.
     message = _UNRECOGNIZED.sub(
-        "unrecognized arguments (withheld); a key or mnemonic must be "
-        "one argument",
+        "unrecognized arguments (withheld); check for a misspelled option, or "
+        "pass a key or mnemonic as a single argument",
         message,
     )
     return _IGNORED_EXPLICIT.sub("ignored explicit argument", message)

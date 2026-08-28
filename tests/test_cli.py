@@ -152,17 +152,19 @@ def test_rejects_an_unknown_format(command, capsys):
     assert "hex" in captured.err and "age" in captured.err
 
 
-@pytest.mark.parametrize("n_bytes", [16, 20, 24, 28])
-def test_decode_age_requires_twenty_four_words(n_bytes, capsys):
+@pytest.mark.parametrize("n_bytes, n_words", [(16, 12), (20, 15), (24, 18), (28, 21)])
+def test_decode_age_requires_twenty_four_words(n_bytes, n_words, capsys):
     # Distinctive entropy, not bytes(n): an all-"abandon" phrase cannot tell
     # "the count was reported" from "the phrase was echoed".
     words = entropy_to_mnemonic(bytes(range(1, n_bytes + 1)))
     assert main(["decode", "--format", "age", " ".join(words)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
+    # A literal count, not len(words): deriving it from the code under test
+    # would let a wrong word count assert itself.
     assert captured.err == (
-        f"mnemocode: error: an age key is always 24 words; this mnemonic "
-        f"has {len(words)}\n"
+        "mnemocode: error: an age key is always 24 words; this mnemonic "
+        f"has {n_words}\n"
     )
 
 
@@ -251,10 +253,16 @@ def test_an_unquoted_mnemonic_does_not_echo_its_words(capsys):
     assert exc.value.code == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    # Every word, not just the tail: the first is consumed as the key
-    # positional and must not be echoed either.
-    assert not any(word in captured.err for word in words)
-    assert "must be one argument" in captured.err
+    # Exact, not a word scan: "code", "must", "one" and "age" are all BIP-39
+    # words that occur in the usage line or the message, so a scan would
+    # report a false leak for some vectors and miss a single echoed character.
+    # Pinning both parts covers every word, not just the tail: the first is
+    # consumed as the key positional and must not be echoed either.
+    assert captured.err.startswith("usage: mnemocode ")
+    assert captured.err.endswith(
+        "mnemocode: error: unrecognized arguments (withheld); check for a "
+        "misspelled option, or pass a key or mnemonic as a single argument\n"
+    )
 
 
 @pytest.mark.parametrize("command", ["encode", "decode"])
@@ -267,9 +275,39 @@ def test_a_key_given_as_the_format_value_is_not_echoed(command, capsys):
     with pytest.raises(SystemExit) as exc:
         main([command, "--format", IDENTITY])
     assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert IDENTITY not in err
-    assert "hex" in err and "age" in err
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert IDENTITY not in captured.err
+    assert "hex" in captured.err and "age" in captured.err
+
+
+def test_a_format_value_that_mimics_the_message_is_fully_redacted(capsys):
+    """The greedy match must run past a " (choose from" inside the value.
+
+    A lazy `.+?` stops at the planted fragment and leaves the tail of the
+    value standing, so this is what makes the greediness load-bearing.
+    """
+    with pytest.raises(SystemExit) as exc:
+        main(["encode", "--format", f"{IDENTITY} (choose from {IDENTITY}"])
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert IDENTITY not in captured.err
+    assert "hex" in captured.err and "age" in captured.err
+
+
+def test_a_multiline_argument_is_fully_redacted(capsys):
+    """argparse joins raw argv, so a pasted newline survives into the message.
+
+    Without re.DOTALL the pattern stops at the newline and everything after
+    it reaches stderr verbatim.
+    """
+    with pytest.raises(SystemExit) as exc:
+        main(["encode", "somekey", f"{IDENTITY}\n{IDENTITY}"])
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert IDENTITY not in captured.err
 
 
 @pytest.mark.parametrize("argv", [["--version"], ["encode", "--help"]])
@@ -281,6 +319,8 @@ def test_an_explicit_argument_to_a_flag_does_not_echo_the_key(argv, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert IDENTITY not in captured.err
+    # Redaction must leave a diagnostic behind, not blank the message out.
+    assert "ignored explicit argument" in captured.err
 
 
 def test_both_directions_support_the_same_formats():
@@ -342,4 +382,5 @@ def test_encode_hex_reports_an_empty_key(capsys):
     assert main(["encode", ""]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
+    assert captured.err.startswith("mnemocode: error:")
     assert "0 bits" in captured.err
