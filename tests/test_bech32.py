@@ -28,7 +28,7 @@ INVALID = [
     ("pzry9x0s0muk", "no separator character", "no '1' separator"),
     ("1pzry9x0s0muk", "empty HRP", "empty human-readable part"),
     ("x1b4n0q5v", "invalid data character", "not a bech32 data character"),
-    ("li1dgmt3", "too short checksum", "character checksum"),
+    ("li1dgmt3", "too short checksum", "needs at least 6 for the checksum"),
     ("de1lg7wt\xff", "invalid character in checksum", "out of range"),
     ("A1G7SGD8", "checksum calculated with uppercase form of HRP", "checksum"),
     ("10a06t8", "empty HRP", "empty human-readable part"),

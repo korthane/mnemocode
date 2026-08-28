@@ -54,7 +54,9 @@ output can go straight into a key file.
 
 The Bech32 checksum is verified on the way in, just as the BIP-39 checksum is,
 so a mistyped key is reported rather than silently converted to the wrong
-mnemonic.
+mnemonic. `decode --format age` likewise refuses a mnemonic that is not 24
+words, since a shorter phrase carries fewer than the 32 bytes an age identity
+needs.
 
 Note that a mnemonic does not record which format it came from. A phrase made
 from an age key decodes as hex just as readily, so `decode` needs to be told

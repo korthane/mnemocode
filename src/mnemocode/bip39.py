@@ -73,8 +73,9 @@ def mnemonic_to_entropy(mnemonic: Sequence[str]) -> bytes:
         try:
             index = indexes[word.lower()]
         except KeyError:
+            # The word is secret material; the position is enough to locate it.
             raise ValueError(
-                f"word {position} is not in the BIP-39 English wordlist: {word!r}"
+                f"word {position} is not in the BIP-39 English wordlist"
             ) from None
         payload = (payload << BITS_PER_WORD) | index
 

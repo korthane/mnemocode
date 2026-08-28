@@ -2,9 +2,17 @@ import pytest
 
 from mnemocode.bech32 import bech32_encode
 from mnemocode.bip39 import entropy_to_mnemonic
-from mnemocode.cli import build_parser, main, parse_hex_key
+from mnemocode.cli import (
+    FORMATS,
+    KEY_FORMATTERS,
+    KEY_PARSERS,
+    build_parser,
+    main,
+    parse_hex_key,
+)
 
 ZEROS_12 = "abandon " * 11 + "about"
+ZEROS_24 = "abandon " * 23 + "art"
 
 
 def test_parses_hex_with_and_without_prefix():
@@ -107,21 +115,63 @@ def test_decode_age_requires_twenty_four_words(n_bytes, capsys):
     assert "24 words" in captured.err
 
 
+# The spec gives each of these its own scenario, requiring the message to name
+# the cause, so pin the fragment rather than only the "mnemocode: error:" prefix.
 @pytest.mark.parametrize(
-    "key",
+    "key,message",
     [
-        IDENTITY[:-1] + "P",  # broken bech32 checksum
-        IDENTITY[:-1] + IDENTITY[-1].lower(),  # mixed case
-        "age13aqvttdk3ujkyjh9kg2w5an6dmy5mq5a84a4uxk3hfhnugfc9p0sy5p2wh",  # public
-        "00" * 32,  # hex, not an identity
-        bech32_encode("age-secret-key-", bytes(31)).upper(),  # right HRP, 31 bytes
+        (IDENTITY[:-1] + "P", "checksum does not match"),
+        (IDENTITY[:-1] + IDENTITY[-1].lower(), "mixes upper and lower case"),
+        (
+            "age13aqvttdk3ujkyjh9kg2w5an6dmy5mq5a84a4uxk3hfhnugfc9p0sy5p2wh",
+            "not an age secret key",
+        ),
+        ("00" * 32, "no '1' separator"),
+        (bech32_encode("age-secret-key-", bytes(31)).upper(), "31 bytes"),
     ],
 )
-def test_encode_age_reports_a_bad_key_without_traceback(key, capsys):
+def test_encode_age_reports_a_bad_key_without_traceback(key, message, capsys):
     assert main(["encode", "--format", "age", key]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith("mnemocode: error:")
+    assert message in captured.err
+    # The key is secret material; it must not reach stderr, logs or scrollback.
+    assert key not in captured.err
+
+
+def test_encode_age_does_not_echo_a_hex_key_given_by_mistake(capsys):
+    """A hex key holds a '1', so it splits as a bech32 HRP and a data part."""
+    secret = bytes(range(32)).hex()
+    assert main(["encode", "--format", "age", secret]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert secret not in captured.err
+
+
+def test_both_directions_support_the_same_formats():
+    """A format encode accepts but decode cannot render would break round trips."""
+    assert KEY_PARSERS.keys() == KEY_FORMATTERS.keys()
+    assert set(FORMATS) == KEY_PARSERS.keys()
+
+
+def test_decode_age_still_checks_the_bip39_checksum(capsys):
+    """The 24-word gate runs first; it must not bypass the checksum check."""
+    words = ["abandon"] * 23 + ["about"]
+    assert main(["decode", "--format", "age", " ".join(words)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "checksum" in captured.err
+
+
+@pytest.mark.parametrize(
+    "args,expected_prefix",
+    [(["encode", IDENTITY], "abandon"), (["decode", ZEROS_24], "AGE-SECRET-KEY-1")],
+)
+def test_format_option_may_follow_the_positionals(args, expected_prefix, capsys):
+    """decode's nargs="+" makes this the ordering most likely to break."""
+    assert main([*args, "--format", "age"]) == 0
+    assert capsys.readouterr().out.strip().startswith(expected_prefix)
 
 
 def test_encode_hex_rejects_an_identity(capsys):
