@@ -88,7 +88,13 @@ _AMBIGUOUS = re.compile(r"ambiguous option: .+ could match ", re.DOTALL)
 
 
 def _redact_argv(message: str) -> str:
+    # Order matters: the two patterns that keep a trailing literal run first.
+    # The others consume to end of string, so a value with "unrecognized
+    # arguments: " planted in it would otherwise eat the " could match " that
+    # anchors the ambiguous-option pattern and leave the value standing.
     message = _INVALID_CHOICE.sub("invalid choice (choose from", message)
+    # The match list argparse appends is registered option names, not input.
+    message = _AMBIGUOUS.sub("ambiguous option (withheld) could match ", message)
     # Conditional, not a rule: decode takes loose words, so "a mnemonic must
     # be one argument" would be false, and the cause is as often a misspelled
     # option as an unquoted phrase.
@@ -97,9 +103,7 @@ def _redact_argv(message: str) -> str:
         "pass a key or mnemonic as a single argument",
         message,
     )
-    message = _IGNORED_EXPLICIT.sub("ignored explicit argument", message)
-    # The match list argparse appends is registered option names, not input.
-    return _AMBIGUOUS.sub("ambiguous option (withheld) could match ", message)
+    return _IGNORED_EXPLICIT.sub("ignored explicit argument", message)
 
 
 class _RedactingParser(argparse.ArgumentParser):

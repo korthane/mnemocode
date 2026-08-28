@@ -1,5 +1,6 @@
 import pytest
 
+from mnemocode import __version__
 from mnemocode.bech32 import bech32_encode
 from mnemocode.bip39 import entropy_to_mnemonic
 from mnemocode.cli import (
@@ -198,37 +199,62 @@ def test_decode_age_rejects_any_other_word_count(n_words, capsys):
 @pytest.mark.parametrize(
     "key,message",
     [
-        (IDENTITY[:-1] + "P", "checksum does not match"),
-        (IDENTITY[:-1] + IDENTITY[-1].lower(), "mixes upper and lower case"),
+        (IDENTITY[:-1] + "P", "bech32 checksum does not match"),
+        (
+            IDENTITY[:-1] + IDENTITY[-1].lower(),
+            "bech32 string mixes upper and lower case",
+        ),
         (
             "age13aqvttdk3ujkyjh9kg2w5an6dmy5mq5a84a4uxk3hfhnugfc9p0sy5p2wh",
-            "not an age secret key",
+            "not an age secret key: expected the 'age-secret-key-' prefix, "
+            "got 'age'",
         ),
-        ("00" * 32, "no '1' separator"),
-        (bech32_encode("age-secret-key-", bytes(31)).upper(), "31 bytes"),
-        (IDENTITY[:20] + "B" + IDENTITY[21:], "not a bech32 data character"),
-        (IDENTITY.replace("K", "\u212a", 1), "character out of range"),
+        ("00" * 32, "bech32 string has no '1' separator"),
+        (
+            bech32_encode("age-secret-key-", bytes(31)).upper(),
+            "age secret key is 31 bytes; must be 32 bytes",
+        ),
+        (
+            IDENTITY[:20] + "B" + IDENTITY[21:],
+            "not a bech32 data character: 'b'",
+        ),
+        (
+            IDENTITY.replace("K", "\u212a", 1),
+            "bech32 string has a character out of range: '\u212a'",
+        ),
     ],
 )
 def test_encode_age_reports_a_bad_key_without_traceback(key, message, capsys):
     assert main(["encode", "--format", "age", key]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("mnemocode: error:")
-    assert message in captured.err
-    # The key is secret material; it must not reach stderr, logs or scrollback.
-    assert key not in captured.err
+    # Exact, not "key not in err": these messages quote the offending
+    # character, so containment alone would let a widened one — say, adding
+    # the whole data part for context — ship with the suite green.
+    assert captured.err == f"mnemocode: error: {message}\n"
 
 
 # A hex key holds a '1', so it splits as a bech32 HRP and a data part. The
 # second case puts that '1' far enough left that the data part clears the
 # length and charset checks and the split is only caught by the checksum.
-@pytest.mark.parametrize("secret", [bytes(range(32)).hex(), "01" + "22" * 31])
-def test_encode_age_does_not_echo_a_hex_key_given_by_mistake(secret, capsys):
+@pytest.mark.parametrize(
+    "secret,message",
+    [
+        (
+            bytes(range(32)).hex(),
+            "bech32 data part is 1 characters; needs at least 6 for the "
+            "checksum",
+        ),
+        ("01" + "22" * 31, "bech32 checksum does not match"),
+    ],
+)
+def test_encode_age_does_not_echo_a_hex_key_given_by_mistake(
+    secret, message, capsys
+):
     assert main(["encode", "--format", "age", secret]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert secret not in captured.err
+    assert captured.err == f"mnemocode: error: {message}\n"
 
 
 # "zzzz" rather than a word like "mnemocode", which the error prefix contains.
@@ -241,8 +267,10 @@ def test_decode_does_not_echo_a_word_outside_the_wordlist(args, n_words, capsys)
     assert main([*args, " ".join(words)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert f"word {n_words}" in captured.err
-    assert "zzzz" not in captured.err
+    assert captured.err == (
+        f"mnemocode: error: word {n_words} is not in the BIP-39 English "
+        "wordlist\n"
+    )
 
 
 # argparse fails before main()'s try block, and its own messages quote the
@@ -373,6 +401,38 @@ def test_an_ambiguous_option_that_mimics_the_message_is_fully_redacted(capsys):
     assert "ambiguous option" in captured.err
 
 
+@pytest.mark.parametrize(
+    "planted", [" ignored explicit argument x", " unrecognized arguments: x"]
+)
+@pytest.mark.parametrize("argv", [[], ["encode"], ["decode"]])
+def test_one_message_planted_in_another_is_still_redacted(
+    argv, planted, capsys
+):
+    """A value may carry the text of a different argparse message.
+
+    The patterns that consume to end of string must not run first: they eat
+    the trailing " could match " the ambiguous-option pattern needs, and the
+    whole token then survives on stderr.
+    """
+    with pytest.raises(SystemExit) as exc:
+        main([*argv, f"--={IDENTITY}{planted}"])
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert IDENTITY not in captured.err
+    assert "ambiguous option" in captured.err
+
+
+def test_version_still_prints_on_the_redacting_parser(capsys):
+    """--version exits through the same subclass that rewrites error()."""
+    with pytest.raises(SystemExit) as exc:
+        main(["--version"])
+    assert exc.value.code == 0
+    captured = capsys.readouterr()
+    assert captured.out == f"mnemocode {__version__}\n"
+    assert captured.err == ""
+
+
 def test_both_directions_support_the_same_formats():
     """A format encode accepts but decode cannot render would break round trips."""
     assert KEY_PARSERS.keys() == KEY_FORMATTERS.keys()
@@ -416,16 +476,19 @@ def test_age_and_hex_encode_the_same_key_identically(capsys):
 
 # Distinctive digits, not "00" * n: a repeated-zero key is indistinguishable
 # from noise in stderr even if the message echoes it in full.
-@pytest.mark.parametrize("bad", ["zz" * 16, "ab" * 15, "cd" * 33])
-def test_encode_hex_reports_a_bad_key_without_traceback(bad, capsys):
+@pytest.mark.parametrize(
+    "bad,message",
+    [
+        ("zz" * 16, "key is not valid hex"),
+        ("ab" * 15, "key is 120 bits; must be one of 128, 160, 192, 224, 256"),
+        ("cd" * 33, "key is 264 bits; must be one of 128, 160, 192, 224, 256"),
+    ],
+)
+def test_encode_hex_reports_a_bad_key_without_traceback(bad, message, capsys):
     assert main(["encode", bad]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("mnemocode: error:")
-    # The key is secret material; it must not reach stderr. Kept out of the
-    # parametrization above: "" is a substring of every message, so the
-    # empty key would make this assertion vacuous.
-    assert bad not in captured.err
+    assert captured.err == f"mnemocode: error: {message}\n"
 
 
 def test_encode_hex_reports_an_empty_key(capsys):
