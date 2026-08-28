@@ -1,7 +1,9 @@
 """Command-line interface for mnemocode."""
 
 import argparse
+import re
 import sys
+from typing import NoReturn
 
 from . import __version__
 from .agekey import format_age_secret_key, parse_age_secret_key
@@ -70,8 +72,33 @@ def add_format_option(parser: argparse.ArgumentParser) -> None:
     )
 
 
+# argparse quotes the offending argv value into these two messages, and here
+# that value is the key itself: a mistyped subcommand prints the whole
+# identity, an unquoted mnemonic prints all but its first word.
+_INVALID_CHOICE = re.compile(r"invalid choice: .+? \(choose from")
+_UNRECOGNIZED = re.compile(r"unrecognized arguments: .+", re.DOTALL)
+
+
+def _redact_argv(message: str) -> str:
+    message = _INVALID_CHOICE.sub("invalid choice (choose from", message)
+    return _UNRECOGNIZED.sub(
+        "unrecognized arguments; quote a mnemonic as one argument", message
+    )
+
+
+class _RedactingParser(argparse.ArgumentParser):
+    """Parser that keeps key material out of argparse's own diagnostics.
+
+    argparse fails before main() can catch anything, so redaction has to
+    happen here for the no-leak rule to hold on every exit path.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        super().error(_redact_argv(message))
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _RedactingParser(
         prog="mnemocode",
         description="Convert between a key and a BIP-39 mnemonic phrase.",
     )

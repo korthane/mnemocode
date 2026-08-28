@@ -64,10 +64,25 @@ def test_decode_accepts_separate_words_and_one_phrase(capsys):
 
 
 def test_decode_reports_bad_checksum_without_traceback(capsys):
-    assert main(["decode", "abandon " * 12]) == 2
+    # A distinctive phrase, not "abandon" * 12: an all-one-word mnemonic cannot
+    # tell "the count was reported" from "the phrase was echoed".
+    words = VECTOR_WORDS.split()[:11] + ["zebra"]
+    assert main(["decode", " ".join(words)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "checksum" in captured.err
+    # The mnemonic is secret material; it must not reach stderr.
+    assert not any(word in captured.err for word in words)
+
+
+def test_decode_does_not_echo_a_phrase_of_the_wrong_length(capsys):
+    """The word-count message must report the count, never the words."""
+    words = VECTOR_WORDS.split()[:13]
+    assert main(["decode", " ".join(words)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "13 words" in captured.err
+    assert not any(word in captured.err for word in words)
 
 
 # The same synthetic identity as tests/test_agekey.py, kept here so this file
@@ -134,15 +149,19 @@ def test_rejects_an_unknown_format(command, capsys):
 
 @pytest.mark.parametrize("n_bytes", [16, 20, 24, 28])
 def test_decode_age_requires_twenty_four_words(n_bytes, capsys):
-    mnemonic = " ".join(entropy_to_mnemonic(bytes(n_bytes)))
-    assert main(["decode", "--format", "age", mnemonic]) == 2
+    # Distinctive entropy, not bytes(n): an all-"abandon" phrase cannot tell
+    # "the count was reported" from "the phrase was echoed".
+    words = entropy_to_mnemonic(bytes(range(1, n_bytes + 1)))
+    assert main(["decode", "--format", "age", " ".join(words)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "24 words" in captured.err
+    # The mnemonic is secret material; it must not reach stderr.
+    assert not any(word in captured.err for word in words)
 
 
 @pytest.mark.parametrize("n_words", [1, 25, 48])
-def test_decode_age_rejects_more_than_twenty_four_words(n_words, capsys):
+def test_decode_age_rejects_any_other_word_count(n_words, capsys):
     """The gate must bracket 24, not just catch phrases shorter than it."""
     assert main(["decode", "--format", "age", " ".join(["abandon"] * n_words)]) == 2
     captured = capsys.readouterr()
@@ -200,6 +219,29 @@ def test_decode_does_not_echo_a_word_outside_the_wordlist(args, n_words, capsys)
     assert "zzzz" not in captured.err
 
 
+# argparse fails before main()'s try block, and its own messages quote the
+# offending argv value. These pin the redaction; if a future argparse rewords
+# either message the regex stops matching and these fail rather than leaking.
+def test_a_mistyped_subcommand_does_not_echo_the_key(capsys):
+    """Omitting "encode" makes argparse report the key as a bad subcommand."""
+    with pytest.raises(SystemExit) as exc:
+        main([IDENTITY])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert IDENTITY not in err
+    assert "encode" in err and "decode" in err
+
+
+def test_an_unquoted_mnemonic_does_not_echo_its_words(capsys):
+    """`encode word word ...` sends the tail of the phrase through argparse."""
+    words = VECTOR_WORDS.split()
+    with pytest.raises(SystemExit) as exc:
+        main(["encode", *words])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert not any(word in err for word in words[1:])
+
+
 def test_both_directions_support_the_same_formats():
     """A format encode accepts but decode cannot render would break round trips."""
     assert KEY_PARSERS.keys() == KEY_FORMATTERS.keys()
@@ -241,9 +283,13 @@ def test_age_and_hex_encode_the_same_key_identically(capsys):
     assert capsys.readouterr().out == from_age
 
 
-@pytest.mark.parametrize("bad", ["zz" * 16, "00" * 15, "00" * 33, ""])
+# Distinctive digits, not "00" * n: a repeated-zero key is indistinguishable
+# from noise in stderr even if the message echoes it in full.
+@pytest.mark.parametrize("bad", ["zz" * 16, "ab" * 15, "cd" * 33, ""])
 def test_encode_hex_reports_a_bad_key_without_traceback(bad, capsys):
     assert main(["encode", bad]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith("mnemocode: error:")
+    # The key is secret material; it must not reach stderr.
+    assert bad == "" or bad not in captured.err

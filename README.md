@@ -16,6 +16,9 @@ $ mnemocode decode army van defense carry jealous true garbage claim echo media 
 any case. It verifies the BIP-39 checksum and exits non-zero on a mismatch,
 so a mistyped word is reported rather than silently decoded to the wrong key.
 
+Errors name a bad word by its position rather than quoting it, and never echo
+the key or the phrase, so the diagnostics are safe to paste into a bug report.
+
 ## Key sizes
 
 BIP-39 accepts entropy in multiples of 32 bits, between 128 and 256:

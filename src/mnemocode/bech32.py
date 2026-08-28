@@ -54,7 +54,7 @@ def convertbits(
 
     Raises:
         ValueError: on a value too wide for from_bits, or, when pad is False,
-            on more than ``to_bits - 1`` leftover bits or a non-zero one.
+            on more than ``from_bits - 1`` leftover bits or a non-zero one.
     """
     accumulator = 0
     bits = 0
