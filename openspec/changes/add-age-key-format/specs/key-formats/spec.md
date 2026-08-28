@@ -137,3 +137,31 @@ diagnostic to standard error, leaving standard output empty.
 - **WHEN** any key or mnemonic is rejected
 - **THEN** standard output is empty, standard error names the problem, and the
   exit status is 2
+
+### Requirement: Diagnostics never echo key material
+
+A diagnostic is the one part of a failed run a user is likely to paste into a
+bug report, so no message the tool writes to standard error SHALL contain the
+key, the mnemonic, or any word of one. A rejected word SHALL be identified by
+its 1-based position instead. This holds on every exit path, including the
+errors the argument parser emits before a subcommand handler runs.
+
+#### Scenario: A rejected word is named by its position
+
+- **WHEN** a mnemonic carries a word outside the BIP-39 English wordlist
+- **THEN** standard error names the word's position and does not contain the
+  word
+
+#### Scenario: A rejected key is not quoted back
+
+- **WHEN** a key is rejected for bad hex, bad Bech32, mixed case, a failed
+  checksum, or an unsupported size
+- **THEN** standard error names the cause and does not contain the key
+
+#### Scenario: Argument-parsing failures do not quote the command line
+
+- **WHEN** a key is given where a subcommand or a `--format` value was
+  expected, or a mnemonic is passed unquoted so its words become unrecognized
+  arguments
+- **THEN** the command exits with status 2 and standard error reports the
+  problem without repeating any of the offending arguments

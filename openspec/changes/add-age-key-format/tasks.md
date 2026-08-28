@@ -67,3 +67,17 @@
       afterwards; do not commit it.
 - [x] 5.2 Verify every scenario in `specs/key-formats/spec.md` has a
       corresponding test, and that `uv run pytest` passes with no skips.
+
+## 6. Diagnostics carry no key material
+
+- [x] 6.1 Report a mnemonic word rejected by `bip39.py` by its 1-based position
+      rather than echoing it, and assert in `tests/test_bip39.py` and
+      `tests/test_cli.py` that the word never reaches stderr.
+- [x] 6.2 Keep key material out of argparse's own diagnostics, which are
+      emitted before `main()` can catch anything: redact the argv value from
+      `invalid choice`, `unrecognized arguments` and `ignored explicit
+      argument`. Verify a key given as a subcommand, as a `--format` value, as
+      `--flag=KEY`, and an unquoted mnemonic all exit 2 without echoing.
+- [x] 6.3 Pin the redaction with tests that fail rather than leak if argparse
+      rewords a message, and that assert the substituted text still names the
+      problem.

@@ -94,8 +94,27 @@ alternative — let `agekey.py`'s length check fail — produces a message about
 byte counts for a user who supplied words. The spec's scenario calls for a
 message naming the 24-word requirement.
 
+### Redaction lives in `ArgumentParser.error()`
+
+argparse quotes the offending argv value into `invalid choice: …`,
+`unrecognized arguments: …` and `ignored explicit argument …`, and it exits
+before `main()`'s `try` block can see anything. A key typed where a subcommand
+belongs, or as the `--format` value, therefore prints the whole identity, and
+an unquoted mnemonic prints all but its first word. Overriding `error()` is the
+one hook that covers every argparse exit path; the `encode` and `decode`
+subparsers inherit the subclass through `add_subparsers`' `parser_class`
+default.
+
+**Alternative considered:** scrubbing argv before `parse_args()`. Rejected — it
+would have to reimplement argparse's own notion of what is unrecognized.
+
 ## Risks / Trade-offs
 
+- **The argparse redaction matches on argparse's own message text.** A future
+  CPython rewording would make the regexes miss and the value leak again.
+  → `tests/test_cli.py` pins all three messages, so a rewording fails the
+  suite rather than leaking. The cost is accepted: the user no longer sees
+  which argument was rejected.
 - **A hand-written Bech32 codec is a place to get the checksum subtly wrong.**
   → Test against the BIP-173 vectors including the invalid ones (bad checksum,
   mixed case, non-zero padding bits, wrong length), plus a round trip through a

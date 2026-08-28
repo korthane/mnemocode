@@ -70,9 +70,12 @@ def test_decode_reports_bad_checksum_without_traceback(capsys):
     assert main(["decode", " ".join(words)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "checksum" in captured.err
-    # The mnemonic is secret material; it must not reach stderr.
-    assert not any(word in captured.err for word in words)
+    # Exact, not a word scan: a scan reports a false leak whenever a vector
+    # word also occurs in the message, and misses a single echoed character.
+    assert captured.err == (
+        "mnemocode: error: checksum mismatch; the mnemonic contains a typo "
+        "or wrong word order\n"
+    )
 
 
 def test_decode_does_not_echo_a_phrase_of_the_wrong_length(capsys):
@@ -81,8 +84,9 @@ def test_decode_does_not_echo_a_phrase_of_the_wrong_length(capsys):
     assert main(["decode", " ".join(words)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "13 words" in captured.err
-    assert not any(word in captured.err for word in words)
+    assert captured.err == (
+        "mnemocode: error: mnemonic has 13 words; must be 12, 15, 18, 21 or 24\n"
+    )
 
 
 # The same synthetic identity as tests/test_agekey.py, kept here so this file
@@ -143,8 +147,9 @@ def test_rejects_an_unknown_format(command, capsys):
     with pytest.raises(SystemExit) as exc:
         main([command, "--format", "base64", "whatever"])
     assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert "hex" in err and "age" in err
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "hex" in captured.err and "age" in captured.err
 
 
 @pytest.mark.parametrize("n_bytes", [16, 20, 24, 28])
@@ -155,9 +160,10 @@ def test_decode_age_requires_twenty_four_words(n_bytes, capsys):
     assert main(["decode", "--format", "age", " ".join(words)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "24 words" in captured.err
-    # The mnemonic is secret material; it must not reach stderr.
-    assert not any(word in captured.err for word in words)
+    assert captured.err == (
+        f"mnemocode: error: an age key is always 24 words; this mnemonic "
+        f"has {len(words)}\n"
+    )
 
 
 @pytest.mark.parametrize("n_words", [1, 25, 48])
@@ -196,9 +202,11 @@ def test_encode_age_reports_a_bad_key_without_traceback(key, message, capsys):
     assert key not in captured.err
 
 
-def test_encode_age_does_not_echo_a_hex_key_given_by_mistake(capsys):
-    """A hex key holds a '1', so it splits as a bech32 HRP and a data part."""
-    secret = bytes(range(32)).hex()
+# A hex key holds a '1', so it splits as a bech32 HRP and a data part. The
+# second case puts that '1' far enough left that the data part clears the
+# length and charset checks and the split is only caught by the checksum.
+@pytest.mark.parametrize("secret", [bytes(range(32)).hex(), "01" + "22" * 31])
+def test_encode_age_does_not_echo_a_hex_key_given_by_mistake(secret, capsys):
     assert main(["encode", "--format", "age", secret]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -227,9 +235,12 @@ def test_a_mistyped_subcommand_does_not_echo_the_key(capsys):
     with pytest.raises(SystemExit) as exc:
         main([IDENTITY])
     assert exc.value.code == 2
-    err = capsys.readouterr().err
-    assert IDENTITY not in err
-    assert "encode" in err and "decode" in err
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert IDENTITY not in captured.err
+    # Redaction must leave a diagnostic behind, not blank the message out.
+    assert "invalid choice" in captured.err
+    assert "encode" in captured.err and "decode" in captured.err
 
 
 def test_an_unquoted_mnemonic_does_not_echo_its_words(capsys):
@@ -238,8 +249,38 @@ def test_an_unquoted_mnemonic_does_not_echo_its_words(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["encode", *words])
     assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    # Every word, not just the tail: the first is consumed as the key
+    # positional and must not be echoed either.
+    assert not any(word in captured.err for word in words)
+    assert "must be one argument" in captured.err
+
+
+@pytest.mark.parametrize("command", ["encode", "decode"])
+def test_a_key_given_as_the_format_value_is_not_echoed(command, capsys):
+    """`--format KEY` makes the subparser report the key as a bad choice.
+
+    Redaction reaches the subparsers only through add_subparsers' default
+    parser_class, so this also pins that inheritance.
+    """
+    with pytest.raises(SystemExit) as exc:
+        main([command, "--format", IDENTITY])
+    assert exc.value.code == 2
     err = capsys.readouterr().err
-    assert not any(word in err for word in words[1:])
+    assert IDENTITY not in err
+    assert "hex" in err and "age" in err
+
+
+@pytest.mark.parametrize("argv", [["--version"], ["encode", "--help"]])
+def test_an_explicit_argument_to_a_flag_does_not_echo_the_key(argv, capsys):
+    """`--version=KEY` makes argparse quote the key back as "ignored"."""
+    with pytest.raises(SystemExit) as exc:
+        main([*argv[:-1], f"{argv[-1]}={IDENTITY}"])
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert IDENTITY not in captured.err
 
 
 def test_both_directions_support_the_same_formats():
@@ -285,11 +326,20 @@ def test_age_and_hex_encode_the_same_key_identically(capsys):
 
 # Distinctive digits, not "00" * n: a repeated-zero key is indistinguishable
 # from noise in stderr even if the message echoes it in full.
-@pytest.mark.parametrize("bad", ["zz" * 16, "ab" * 15, "cd" * 33, ""])
+@pytest.mark.parametrize("bad", ["zz" * 16, "ab" * 15, "cd" * 33])
 def test_encode_hex_reports_a_bad_key_without_traceback(bad, capsys):
     assert main(["encode", bad]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.startswith("mnemocode: error:")
-    # The key is secret material; it must not reach stderr.
-    assert bad == "" or bad not in captured.err
+    # The key is secret material; it must not reach stderr. Kept out of the
+    # parametrization above: "" is a substring of every message, so the
+    # empty key would make this assertion vacuous.
+    assert bad not in captured.err
+
+
+def test_encode_hex_reports_an_empty_key(capsys):
+    assert main(["encode", ""]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "0 bits" in captured.err

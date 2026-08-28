@@ -72,25 +72,35 @@ def add_format_option(parser: argparse.ArgumentParser) -> None:
     )
 
 
-# argparse quotes the offending argv value into these two messages, and here
+# argparse quotes the offending argv value into these three messages, and here
 # that value is the key itself: a mistyped subcommand prints the whole
-# identity, an unquoted mnemonic prints all but its first word.
-_INVALID_CHOICE = re.compile(r"invalid choice: .+? \(choose from")
+# identity, an unquoted mnemonic prints all but its first word, and
+# `--version=KEY` prints the key as an "ignored explicit argument".
+# Greedy and DOTALL on purpose: a lazy match would stop at a " (choose
+# from" embedded in the value itself and leave the rest of it standing.
+_INVALID_CHOICE = re.compile(r"invalid choice: .+ \(choose from", re.DOTALL)
 _UNRECOGNIZED = re.compile(r"unrecognized arguments: .+", re.DOTALL)
+_IGNORED_EXPLICIT = re.compile(r"ignored explicit argument .+", re.DOTALL)
 
 
 def _redact_argv(message: str) -> str:
     message = _INVALID_CHOICE.sub("invalid choice (choose from", message)
-    return _UNRECOGNIZED.sub(
-        "unrecognized arguments; quote a mnemonic as one argument", message
+    # Neutral wording: a leftover argument is as often a stray key or a
+    # misspelled option as it is an unquoted mnemonic.
+    message = _UNRECOGNIZED.sub(
+        "unrecognized arguments (withheld); a key or mnemonic must be "
+        "one argument",
+        message,
     )
+    return _IGNORED_EXPLICIT.sub("ignored explicit argument", message)
 
 
 class _RedactingParser(argparse.ArgumentParser):
     """Parser that keeps key material out of argparse's own diagnostics.
 
     argparse fails before main() can catch anything, so redaction has to
-    happen here for the no-leak rule to hold on every exit path.
+    happen here for the no-leak rule to hold on every exit path. The
+    subparsers inherit this class through add_subparsers' parser_class default.
     """
 
     def error(self, message: str) -> NoReturn:
