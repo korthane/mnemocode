@@ -48,9 +48,9 @@ def convertbits(
         data: values, each below ``2 ** from_bits``.
         from_bits: width of each input value.
         to_bits: width of each output value.
-        pad: when regrouping into wider values the tail rarely lands on a
-            boundary. True pads it with zero bits; False requires the tail to
-            be zero bits alone, which is what decoding demands.
+        pad: the tail rarely lands on a boundary in either direction. True
+            pads it with zero bits, which is what encoding needs; False
+            requires the tail to be zero bits alone, which decoding demands.
 
     Raises:
         ValueError: on a value too wide for from_bits, or, when pad is False,

@@ -21,9 +21,19 @@ def test_parses_hex_with_and_without_prefix():
     assert parse_hex_key("0X" + "00" * 32) == bytes(32)
 
 
-@pytest.mark.parametrize("bad", ["zz" * 16, "00" * 15, "00" * 33, ""])
-def test_rejects_bad_keys(bad):
-    with pytest.raises(ValueError):
+# Pin the cause too: bad digits and a bad length are separate checks, and a
+# bare ValueError would pass if one started reporting the other's message.
+@pytest.mark.parametrize(
+    "bad,message",
+    [
+        ("zz" * 16, "not valid hex"),
+        ("00" * 15, "120 bits"),
+        ("00" * 33, "264 bits"),
+        ("", "0 bits"),
+    ],
+)
+def test_rejects_bad_keys(bad, message):
+    with pytest.raises(ValueError, match=message):
         parse_hex_key(bad)
 
 
@@ -153,6 +163,8 @@ def test_decode_age_rejects_more_than_twenty_four_words(n_words, capsys):
         ),
         ("00" * 32, "no '1' separator"),
         (bech32_encode("age-secret-key-", bytes(31)).upper(), "31 bytes"),
+        (IDENTITY[:20] + "B" + IDENTITY[21:], "not a bech32 data character"),
+        (IDENTITY.replace("K", "\u212a", 1), "character out of range"),
     ],
 )
 def test_encode_age_reports_a_bad_key_without_traceback(key, message, capsys):

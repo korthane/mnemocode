@@ -33,7 +33,7 @@ def test_accepts_lowercase_input():
 
 def test_rejects_mixed_case():
     mixed = IDENTITY[:-1] + IDENTITY[-1].lower()
-    with pytest.raises(ValueError, match="case"):
+    with pytest.raises(ValueError, match="mixes upper and lower case"):
         parse_age_secret_key(mixed)
 
 
@@ -62,7 +62,7 @@ def test_refuses_to_format_a_key_that_is_not_32_bytes(size):
 
 
 def test_rejects_text_that_is_not_bech32_at_all():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="character out of range"):
         parse_age_secret_key("not a key")
 
 
