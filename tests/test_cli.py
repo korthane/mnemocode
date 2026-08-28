@@ -185,13 +185,26 @@ def test_decode_age_requires_twenty_four_words(n_bytes, n_words, capsys):
     )
 
 
-@pytest.mark.parametrize("n_words", [1, 25, 48])
+@pytest.mark.parametrize("n_words", [0, 1, 25, 48])
 def test_decode_age_rejects_any_other_word_count(n_words, capsys):
     """The gate must bracket 24, not just catch phrases shorter than it."""
     assert main(["decode", "--format", "age", " ".join(["abandon"] * n_words)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "24 words" in captured.err
+    assert captured.err == (
+        f"mnemocode: error: an age key is always 24 words; this mnemonic has "
+        f"{n_words}\n"
+    )
+
+
+def test_decode_age_reports_a_whitespace_only_phrase_as_zero_words(capsys):
+    """The word-count gate runs on the re-split words, not the raw argument."""
+    assert main(["decode", "--format", "age", "   "]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "mnemocode: error: an age key is always 24 words; this mnemonic has 0\n"
+    )
 
 
 # The spec gives each of these its own scenario, requiring the message to name
@@ -352,6 +365,8 @@ def test_a_multiline_argument_is_fully_redacted(capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert IDENTITY not in captured.err
+    # Redaction must leave a diagnostic behind, not blank the message out.
+    assert "unrecognized arguments" in captured.err
 
 
 @pytest.mark.parametrize("argv", [["--version"], ["encode", "--help"]])
@@ -423,6 +438,70 @@ def test_one_message_planted_in_another_is_still_redacted(
     assert "ambiguous option" in captured.err
 
 
+def _key_fragments():
+    """Every 12-character window of the identity's Bech32 data part.
+
+    A pattern that fires but matches too little leaves a fragment of the key
+    standing, which a whole-string `IDENTITY not in err` check would miss.
+    """
+    data = IDENTITY.split("1", 1)[1]
+    return [data[i : i + 12] for i in range(len(data) - 12)]
+
+
+# The four redactions are a denylist over argparse's own message text, so the
+# per-message tests above cannot say anything about a shape that starts
+# leaking later. This sweeps malformed argv instead and asserts the property
+# the change exists for: no key material on either stream, whatever argparse
+# decides the problem is.
+@pytest.mark.parametrize("command", [[], ["encode"], ["decode"]])
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "{key}",
+        "--={key}",
+        "--help={key}",
+        "--format={key}",
+        "--nope={key}",
+        "-{key}",
+        "--{key}",
+        "={key}",
+    ],
+)
+def test_no_argv_shape_puts_key_material_on_a_stream(shape, command, capsys):
+    try:
+        main([*command, shape.format(key=IDENTITY)])
+    except SystemExit:
+        pass
+    captured = capsys.readouterr()
+    streams = captured.out + captured.err
+    assert IDENTITY not in streams
+    assert not [f for f in _key_fragments() if f in streams]
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["encode", "{key}", "extra"],
+        ["decode", "--format", "{key}"],
+        ["encode", "--format", "{key}"],
+        ["--version", "{key}"],
+        ["--version={key}"],
+        ["encode", "somekey", "{key}"],
+        ["decode", "abandon", "{key}"],
+    ],
+    ids=lambda argv: "-".join(argv),
+)
+def test_no_multi_token_argv_puts_key_material_on_a_stream(argv, capsys):
+    try:
+        main([token.format(key=IDENTITY) for token in argv])
+    except SystemExit:
+        pass
+    captured = capsys.readouterr()
+    streams = captured.out + captured.err
+    assert IDENTITY not in streams
+    assert not [f for f in _key_fragments() if f in streams]
+
+
 def test_version_still_prints_on_the_redacting_parser(capsys):
     """--version exits through the same subclass that rewrites error()."""
     with pytest.raises(SystemExit) as exc:
@@ -462,8 +541,9 @@ def test_encode_hex_rejects_an_identity(capsys):
     assert main(["encode", "--format", "hex", IDENTITY]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err != ""
-    # The key is secret material; it must not reach stderr, logs or scrollback.
+    # Exact, not a fragment: a widened message is how the key gets back onto
+    # stderr, and it must not reach logs or scrollback.
+    assert captured.err == "mnemocode: error: key is not valid hex\n"
     assert IDENTITY not in captured.err
 
 
@@ -495,5 +575,7 @@ def test_encode_hex_reports_an_empty_key(capsys):
     assert main(["encode", ""]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("mnemocode: error:")
-    assert "0 bits" in captured.err
+    assert captured.err == (
+        "mnemocode: error: key is 0 bits; must be one of "
+        "128, 160, 192, 224, 256\n"
+    )

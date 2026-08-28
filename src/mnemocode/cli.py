@@ -81,29 +81,36 @@ def add_format_option(parser: argparse.ArgumentParser) -> None:
 # Greedy and DOTALL on purpose: a lazy match would stop at a " (choose
 # from" embedded in the value itself and leave the rest of it standing, and
 # the two messages that interpolate raw argv carry a pasted newline through.
-_INVALID_CHOICE = re.compile(r"invalid choice: .+ \(choose from", re.DOTALL)
-_UNRECOGNIZED = re.compile(r"unrecognized arguments: .+", re.DOTALL)
-_IGNORED_EXPLICIT = re.compile(r"ignored explicit argument .+", re.DOTALL)
-_AMBIGUOUS = re.compile(r"ambiguous option: .+ could match ", re.DOTALL)
+# One alternation rather than four passes: argparse always puts the message
+# text before the value, so the leftmost match is the real message, and
+# re.sub never rescans a replacement. A value with another of these messages
+# planted inside it therefore cannot survive by eating the text a second
+# pattern anchors on.
+_ARGV_QUOTED = re.compile(
+    r"(?P<choice>invalid choice: .+ \(choose from)"
+    r"|(?P<ambiguous>ambiguous option: .+ could match )"
+    r"|(?P<unrecognized>unrecognized arguments: .+)"
+    r"|(?P<ignored>ignored explicit argument .+)",
+    re.DOTALL,
+)
 
-
-def _redact_argv(message: str) -> str:
-    # Order matters: the two patterns that keep a trailing literal run first.
-    # The others consume to end of string, so a value with "unrecognized
-    # arguments: " planted in it would otherwise eat the " could match " that
-    # anchors the ambiguous-option pattern and leave the value standing.
-    message = _INVALID_CHOICE.sub("invalid choice (choose from", message)
+_REDACTED = {
+    "choice": "invalid choice (choose from",
     # The match list argparse appends is registered option names, not input.
-    message = _AMBIGUOUS.sub("ambiguous option (withheld) could match ", message)
+    "ambiguous": "ambiguous option (withheld) could match ",
     # Conditional, not a rule: decode takes loose words, so "a mnemonic must
     # be one argument" would be false, and the cause is as often a misspelled
     # option as an unquoted phrase.
-    message = _UNRECOGNIZED.sub(
+    "unrecognized": (
         "unrecognized arguments (withheld); check for a misspelled option, or "
-        "pass a key or mnemonic as a single argument",
-        message,
-    )
-    return _IGNORED_EXPLICIT.sub("ignored explicit argument", message)
+        "pass a key or mnemonic as a single argument"
+    ),
+    "ignored": "ignored explicit argument",
+}
+
+
+def _redact_argv(message: str) -> str:
+    return _ARGV_QUOTED.sub(lambda m: _REDACTED[m.lastgroup], message)
 
 
 class _RedactingParser(argparse.ArgumentParser):
