@@ -17,8 +17,8 @@ error-prone step the tool exists to remove.
 - Add a Bech32 (BIP-173) implementation. It is written in-tree rather than pulled
   in as a dependency so the package keeps `dependencies = []` and the
   `uv run <raw-url>/main.py` entry point keeps working with no install step.
-- Not a breaking change: `bip39.py` is untouched, and 32 bytes is already a
-  supported entropy size.
+- Not a breaking change: `bip39.py`'s encoding is untouched, and 32 bytes is
+  already a supported entropy size.
 
 ## Capabilities
 
@@ -40,7 +40,9 @@ error-prone step the tool exists to remove.
   `type=` hook into the subcommand handlers, because argparse applies `type=`
   before `--format` is known. Invalid keys keep exit code 2 but are reported as
   `mnemocode: error: …` rather than an argparse usage block.
-- **Unchanged**: `bip39.py`, `wordlist.py`, `english.txt`, and the package's
-  zero-dependency install story.
+- **Unchanged**: `wordlist.py`, `english.txt`, and the package's zero-dependency
+  install story. `bip39.py` keeps its encoding, gaining only a one-line message
+  change: a rejected word is reported by position, never echoed, so no mnemonic
+  text reaches stderr.
 - **Docs**: README gains an age/sops section and the key-size table gains a note
   that an age identity is always 256 bits / 24 words.

@@ -97,6 +97,22 @@ def test_decode_defaults_to_hex(capsys):
     assert capsys.readouterr().out.strip() == "00" * 16
 
 
+# An all-zero key hides letter case, so pin it with a BIP-39 vector whose hex
+# spans a-f. The spec requires lowercase hex with no 0x prefix.
+VECTOR_WORDS = (
+    "void come effort suffer camp survey warrior heavy shoot primary clutch "
+    "crush open amazing screen patrol group space point ten exist slush "
+    "involve unfold"
+)
+VECTOR_HEX = "f585c11aec520db57dd353c69554b21a89b20fb0650966fa0a9d6f74fd989d8f"
+
+
+@pytest.mark.parametrize("args", [["decode"], ["decode", "--format", "hex"]])
+def test_decode_prints_lowercase_hex_without_a_prefix(args, capsys):
+    assert main([*args, VECTOR_WORDS]) == 0
+    assert capsys.readouterr().out.strip() == VECTOR_HEX
+
+
 @pytest.mark.parametrize("command", ["encode", "decode"])
 def test_rejects_an_unknown_format(command, capsys):
     with pytest.raises(SystemExit) as exc:
@@ -110,6 +126,15 @@ def test_rejects_an_unknown_format(command, capsys):
 def test_decode_age_requires_twenty_four_words(n_bytes, capsys):
     mnemonic = " ".join(entropy_to_mnemonic(bytes(n_bytes)))
     assert main(["decode", "--format", "age", mnemonic]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "24 words" in captured.err
+
+
+@pytest.mark.parametrize("n_words", [1, 25, 48])
+def test_decode_age_rejects_more_than_twenty_four_words(n_words, capsys):
+    """The gate must bracket 24, not just catch phrases shorter than it."""
+    assert main(["decode", "--format", "age", " ".join(["abandon"] * n_words)]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "24 words" in captured.err
@@ -147,6 +172,20 @@ def test_encode_age_does_not_echo_a_hex_key_given_by_mistake(capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert secret not in captured.err
+
+
+# "zzzz" rather than a word like "mnemocode", which the error prefix contains.
+@pytest.mark.parametrize(
+    "args,n_words", [(["decode"], 12), (["decode", "--format", "age"], 24)]
+)
+def test_decode_does_not_echo_a_word_outside_the_wordlist(args, n_words, capsys):
+    """The word is secret material; only its position may be reported."""
+    words = ["abandon"] * (n_words - 1) + ["zzzz"]
+    assert main([*args, " ".join(words)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert f"word {n_words}" in captured.err
+    assert "zzzz" not in captured.err
 
 
 def test_both_directions_support_the_same_formats():

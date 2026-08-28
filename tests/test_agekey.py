@@ -3,9 +3,9 @@ import pytest
 from mnemocode.agekey import format_age_secret_key, parse_age_secret_key
 from mnemocode.bech32 import bech32_encode
 
-# A synthetic key, not one from age-keygen: a real private key in the tree
-# would trip secret scanners. Verified against age itself -- age-keygen -y
-# accepts this identity and derives PUBLIC_KEY from it.
+# A synthetic key, not one from age-keygen: it has the shape of a real identity
+# and trips secret scanners the same way, but decrypts nothing. Verified against
+# age itself -- age-keygen -y accepts it and derives PUBLIC_KEY from it.
 KEY = bytes(range(32))
 IDENTITY = "AGE-SECRET-KEY-1QQQSYQCYQ5RQWZQFPG9SCRGWPUGPZYSNZS23V9CCRYDPK8QARC0SWRYDWG"
 PUBLIC_KEY = "age13aqvttdk3ujkyjh9kg2w5an6dmy5mq5a84a4uxk3hfhnugfc9p0sy5p2wh"

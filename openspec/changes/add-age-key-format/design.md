@@ -23,7 +23,9 @@ with a reference implementation. A stock BIP-173 codec is therefore sufficient.
 - Keep `dependencies = []` and the no-install entry point intact.
 - Keep Bech32 generic and free of age knowledge, so it is testable against the
   published BIP-173 vectors rather than only against age keys.
-- Leave `bip39.py` untouched.
+- Leave `bip39.py`'s encoding untouched. (It did gain one message change during
+  review: a rejected word is reported by position rather than echoed, matching
+  the rule that no key or mnemonic text reaches stderr.)
 
 **Non-Goals:**
 

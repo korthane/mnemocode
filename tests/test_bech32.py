@@ -143,6 +143,17 @@ def test_convertbits_rejects_a_value_too_wide_for_from_bits(value):
         convertbits([value], 5, 8, pad=False)
 
 
+# convertbits documents a general width contract but the codec only ever uses
+# 8<->5, so the accumulator mask is otherwise pinned at a single width pair.
+@pytest.mark.parametrize("from_bits,to_bits", [(8, 5), (5, 8), (8, 6), (6, 8), (4, 11)])
+def test_convertbits_round_trips_at_other_widths(from_bits, to_bits):
+    values = [i % (1 << from_bits) for i in range(64)]
+    widened = convertbits(values, from_bits, to_bits, pad=True)
+    assert all(0 <= v < (1 << to_bits) for v in widened)
+    restored = convertbits(widened, to_bits, from_bits, pad=True)
+    assert restored[: len(values)] == values
+
+
 def test_convertbits_rejects_non_zero_padding():
     with pytest.raises(ValueError):
         convertbits([0, 0, 0, 0, 1], 5, 8, pad=False)
