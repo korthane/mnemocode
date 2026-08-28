@@ -72,15 +72,19 @@ def add_format_option(parser: argparse.ArgumentParser) -> None:
     )
 
 
-# argparse quotes the offending argv value into these three messages, and here
+# argparse quotes the offending argv value into these four messages, and here
 # that value is the key itself: a mistyped subcommand prints the whole
-# identity, an unquoted mnemonic prints all but its first word, and
-# `--version=KEY` prints the key as an "ignored explicit argument".
+# identity, an unquoted mnemonic prints all but its first word, `--version=KEY`
+# prints the key as an "ignored explicit argument", and `--=KEY` is an empty
+# abbreviation that matches every long option, so argparse calls it ambiguous
+# and prints the token whole.
 # Greedy and DOTALL on purpose: a lazy match would stop at a " (choose
-# from" embedded in the value itself and leave the rest of it standing.
+# from" embedded in the value itself and leave the rest of it standing, and
+# the two messages that interpolate raw argv carry a pasted newline through.
 _INVALID_CHOICE = re.compile(r"invalid choice: .+ \(choose from", re.DOTALL)
 _UNRECOGNIZED = re.compile(r"unrecognized arguments: .+", re.DOTALL)
 _IGNORED_EXPLICIT = re.compile(r"ignored explicit argument .+", re.DOTALL)
+_AMBIGUOUS = re.compile(r"ambiguous option: .+ could match ", re.DOTALL)
 
 
 def _redact_argv(message: str) -> str:
@@ -93,7 +97,9 @@ def _redact_argv(message: str) -> str:
         "pass a key or mnemonic as a single argument",
         message,
     )
-    return _IGNORED_EXPLICIT.sub("ignored explicit argument", message)
+    message = _IGNORED_EXPLICIT.sub("ignored explicit argument", message)
+    # The match list argparse appends is registered option names, not input.
+    return _AMBIGUOUS.sub("ambiguous option (withheld) could match ", message)
 
 
 class _RedactingParser(argparse.ArgumentParser):

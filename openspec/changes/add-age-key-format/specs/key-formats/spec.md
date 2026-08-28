@@ -162,7 +162,8 @@ errors the argument parser emits before a subcommand handler runs.
 
 - **WHEN** a key is given where a subcommand or a `--format` value was
   expected, a key is attached to an option that takes no value
-  (`--version=KEY`), or a mnemonic is passed unquoted so its words become
-  unrecognized arguments
+  (`--version=KEY`), a key is attached to an option abbreviation that matches
+  more than one option (`--=KEY`), or a mnemonic is passed unquoted so its
+  words become unrecognized arguments
 - **THEN** the command exits with status 2 and standard error reports the
   problem without repeating any of the offending arguments

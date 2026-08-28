@@ -75,9 +75,10 @@
       `tests/test_cli.py` that the word never reaches stderr.
 - [x] 6.2 Keep key material out of argparse's own diagnostics, which are
       emitted before `main()` can catch anything: redact the argv value from
-      `invalid choice`, `unrecognized arguments` and `ignored explicit
-      argument`. Verify a key given as a subcommand, as a `--format` value, as
-      `--flag=KEY`, and an unquoted mnemonic all exit 2 without echoing.
+      `invalid choice`, `unrecognized arguments`, `ignored explicit
+      argument` and `ambiguous option`. Verify a key given as a subcommand, as
+      a `--format` value, as `--flag=KEY`, as `--=KEY`, and an unquoted
+      mnemonic all exit 2 without echoing.
 - [x] 6.3 Pin the redaction with tests that fail rather than leak if argparse
       rewords a message, and that assert the substituted text still names the
       problem.

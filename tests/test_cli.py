@@ -52,7 +52,9 @@ def test_requires_a_subcommand(capsys):
 
 def test_encode(capsys):
     assert main(["encode", "00" * 16]) == 0
-    assert capsys.readouterr().out.strip() == ZEROS_12
+    captured = capsys.readouterr()
+    assert captured.out.strip() == ZEROS_12
+    assert captured.err == ""
 
 
 def test_decode_accepts_separate_words_and_one_phrase(capsys):
@@ -61,6 +63,17 @@ def test_decode_accepts_separate_words_and_one_phrase(capsys):
 
     assert main(["decode", ZEROS_12]) == 0
     assert capsys.readouterr().out.strip() == "00" * 16
+
+
+@pytest.mark.parametrize("words", ["", "   "])
+def test_decode_reports_an_empty_mnemonic(words, capsys):
+    """Re-splitting on whitespace must yield no words, not one empty word."""
+    assert main(["decode", words]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == (
+        "mnemocode: error: mnemonic has 0 words; must be 12, 15, 18, 21 or 24\n"
+    )
 
 
 def test_decode_reports_bad_checksum_without_traceback(capsys):
@@ -101,10 +114,13 @@ def test_encode_age_produces_twenty_four_words(capsys):
 
 def test_age_round_trip(capsys):
     assert main(["encode", "--format", "age", IDENTITY]) == 0
-    mnemonic = capsys.readouterr().out.strip()
+    encoded = capsys.readouterr()
+    assert encoded.err == ""
 
-    assert main(["decode", "--format", "age", mnemonic]) == 0
-    assert capsys.readouterr().out.strip() == IDENTITY
+    assert main(["decode", "--format", "age", encoded.out.strip()]) == 0
+    decoded = capsys.readouterr()
+    assert decoded.out.strip() == IDENTITY
+    assert decoded.err == ""
 
 
 def test_lowercase_identity_encodes_the_same(capsys):
@@ -321,6 +337,40 @@ def test_an_explicit_argument_to_a_flag_does_not_echo_the_key(argv, capsys):
     assert IDENTITY not in captured.err
     # Redaction must leave a diagnostic behind, not blank the message out.
     assert "ignored explicit argument" in captured.err
+
+
+@pytest.mark.parametrize("argv", [[], ["encode"], ["decode"]])
+def test_an_ambiguous_option_does_not_echo_the_key(argv, capsys):
+    """`--=KEY` is an empty abbreviation, so argparse quotes the whole token.
+
+    The empty prefix matches every long option the parser has, which is what
+    makes this reachable on the top-level parser and both subparsers.
+    """
+    with pytest.raises(SystemExit) as exc:
+        main([*argv, f"--={IDENTITY}"])
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert IDENTITY not in captured.err
+    # Redaction must leave a diagnostic behind, not blank the message out.
+    assert "ambiguous option" in captured.err
+    assert "--help" in captured.err
+
+
+def test_an_ambiguous_option_that_mimics_the_message_is_fully_redacted(capsys):
+    """Pins the greedy match and re.DOTALL on the ambiguous-option pattern.
+
+    argparse interpolates this token raw, so a planted " could match " stops a
+    lazy pattern and a pasted newline stops one without DOTALL, in both cases
+    leaving the tail of the key on stderr.
+    """
+    with pytest.raises(SystemExit) as exc:
+        main(["encode", f"--={IDENTITY} could match {IDENTITY}\n{IDENTITY}"])
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert IDENTITY not in captured.err
+    assert "ambiguous option" in captured.err
 
 
 def test_both_directions_support_the_same_formats():
