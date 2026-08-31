@@ -47,20 +47,23 @@ KEY_FORMATTERS = {"hex": bytes.hex, "age": format_age_secret_key}
 FORMATS = tuple(KEY_PARSERS)
 
 
-def reject_double_input(given: object, source: str | None, label: str) -> None:
+def reject_double_input(given: bool, source: str | None, label: str) -> None:
     """Refuse a secret supplied twice.
 
     Checked here rather than with a mutually exclusive argparse group: such a
     group accepts a positional only when its nargs permits zero, and the
     message it generates for that case reads poorly. Raising keeps the wording
     consistent with every other key error.
+
+    Callers pass presence, not truthiness: an empty positional is still one the
+    caller supplied, and `encode ""` alone already reports an empty key.
     """
     if given and source is not None:
         raise ValueError(f"give the {label} as an argument or with --input, not both")
 
 
 def run_encode(args: argparse.Namespace) -> int:
-    reject_double_input(args.key, args.input_source, "key")
+    reject_double_input(args.key is not None, args.input_source, "key")
     if args.input_source is not None:
         text = one_secret(read_source(args.input_source))
     elif args.key is not None:
@@ -68,7 +71,7 @@ def run_encode(args: argparse.Namespace) -> int:
         # describe a source, and applying them here would reword its errors.
         text = args.key
     else:
-        text = one_secret(prompt_secret("key"))
+        text = prompt_secret("key")
     # Parsed here rather than in an argparse type= hook, which argparse applies
     # while parsing, before --format is known.
     key = KEY_PARSERS[args.format](text)
@@ -77,7 +80,7 @@ def run_encode(args: argparse.Namespace) -> int:
 
 
 def run_decode(args: argparse.Namespace) -> int:
-    reject_double_input(args.words, args.input_source, "mnemonic")
+    reject_double_input(args.words != [], args.input_source, "mnemonic")
     if args.input_source is not None:
         words = secret_words(read_source(args.input_source))
     elif args.words:
@@ -108,7 +111,7 @@ def add_io_options(parser: argparse.ArgumentParser, *, what: str) -> None:
         metavar="SINK",
         default="stdout",
         help="where to write the result: file:PATH (created private, and never "
-        "overwriting an existing file), fd:N, or stdout (the default)",
+        "overwriting an existing regular file), fd:N, or stdout (the default)",
     )
 
 

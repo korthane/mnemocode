@@ -27,7 +27,9 @@ army van defense carry jealous true garbage claim echo media make crunch
 `decode` verifies the BIP-39 checksum and exits non-zero on a mismatch, so a
 mistyped word is reported rather than silently decoded to the wrong key. It
 reads a phrase written across several lines as one mnemonic, so a phrase
-copied out of a text file needs no reflowing.
+copied out of a text file needs no reflowing. Words may be given in any case,
+and as separate arguments or one quoted phrase — though, like a bare key
+argument, that puts the phrase on the command line.
 
 Errors name a bad word by its position rather than quoting it, and never echo
 the key or the phrase, so the diagnostics are safe to paste into a bug report.
@@ -60,7 +62,16 @@ no extra syntax:
 mnemocode encode --format age --input file:<(age-keygen)
 ```
 
-`fd:` is POSIX-only, as it is in OpenSSL.
+`fd:` is POSIX-only, as it is in OpenSSL. A path is used exactly as given, so
+write `$HOME` rather than `~`: no shell expands a tilde in the middle of a
+word, and `file:~/keys.txt` would look for a directory actually named `~`.
+
+Standard input is read only when you ask for it, with `--input stdin` or
+`--input file:/dev/stdin`. With no `--input` and no argument, mnemocode always
+prompts on the terminal, so a piped key is ignored rather than read. Where
+there is no terminal at all — a cron job, a CI runner, a container — it exits
+with an error naming `--input` instead of waiting for an answer that will
+never come.
 
 A source may hold `#` comment lines and blank lines, both of which are ignored,
 so an `age-keygen` key file can be named directly. Exactly one key must remain
@@ -109,7 +120,7 @@ An age secret key is always 256 bits, so it is always 24 words.
 Pass `--format age` to read or write an age identity instead of hex:
 
 ```
-$ mnemocode encode --format age --input file:~/.config/sops/age/keys.txt
+$ mnemocode encode --format age --input file:"$HOME/.config/sops/age/keys.txt"
 abandon amount liar amount expire adjust cage candy arch gather drum bullet absurd math era live bid rhythm alien crouch range attend journey unaware
 
 $ mnemocode decode --format age --input file:phrase.txt

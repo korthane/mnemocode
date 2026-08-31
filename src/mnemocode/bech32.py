@@ -32,10 +32,11 @@ def _expand_hrp(hrp: str) -> list[int]:
 def _validate_hrp(hrp: str) -> None:
     if not hrp:
         raise ValueError("bech32 string has an empty human-readable part")
-    for char in hrp:
+    for position, char in enumerate(hrp, start=1):
         if not 33 <= ord(char) <= 126:
             raise ValueError(
-                f"human-readable part has a character out of range: {char!r}"
+                f"human-readable part has a character out of range at "
+                f"position {position}"
             )
 
 
@@ -131,9 +132,11 @@ def bech32_decode(text: str) -> tuple[str, bytes]:
     """
     # Check the raw text: U+212A lowercases to "k" and uppercases to itself,
     # so a homoglyph would survive the case and charset checks below.
-    for char in text:
+    for position, char in enumerate(text, start=1):
         if not 33 <= ord(char) <= 126:
-            raise ValueError(f"bech32 string has a character out of range: {char!r}")
+            raise ValueError(
+                f"bech32 string has a character out of range at position {position}"
+            )
     if len(text) > MAX_LENGTH:
         raise ValueError(
             f"bech32 string is {len(text)} characters; max is {MAX_LENGTH}"
@@ -157,10 +160,12 @@ def bech32_decode(text: str) -> tuple[str, bytes]:
         )
 
     data = []
-    for char in encoded:
+    for position, char in enumerate(encoded, start=1):
         value = CHARSET.find(char)
         if value < 0:
-            raise ValueError(f"not a bech32 data character: {char!r}")
+            # By position, never the character: this text is the secret, and
+            # the diagnostics are meant to be safe to paste into a bug report.
+            raise ValueError(f"not a bech32 data character at position {position}")
         data.append(value)
 
     if _polymod(_expand_hrp(hrp) + data) != 1:

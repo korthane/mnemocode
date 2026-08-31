@@ -1,10 +1,8 @@
 import io
 import os
-import pty
 import stat
 import subprocess
 import sys
-import threading
 
 import pytest
 
@@ -228,7 +226,7 @@ def test_decode_age_reports_a_whitespace_only_phrase_as_zero_words(capsys):
         (
             "age13aqvttdk3ujkyjh9kg2w5an6dmy5mq5a84a4uxk3hfhnugfc9p0sy5p2wh",
             "not an age secret key: expected the 'age-secret-key-' prefix, "
-            "got 'age'",
+            "got a different one",
         ),
         ("00" * 32, "bech32 string has no '1' separator"),
         (
@@ -237,11 +235,11 @@ def test_decode_age_reports_a_whitespace_only_phrase_as_zero_words(capsys):
         ),
         (
             IDENTITY[:20] + "B" + IDENTITY[21:],
-            "not a bech32 data character: 'b'",
+            "not a bech32 data character at position 5",
         ),
         (
             IDENTITY.replace("K", "\u212a", 1),
-            "bech32 string has a character out of range: '\u212a'",
+            "bech32 string has a character out of range at position 12",
         ),
     ],
 )
@@ -249,9 +247,9 @@ def test_encode_age_reports_a_bad_key_without_traceback(key, message, capsys):
     assert main(["encode", "--format", "age", key]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    # Exact, not "key not in err": these messages quote the offending
-    # character, so containment alone would let a widened one — say, adding
-    # the whole data part for context — ship with the suite green.
+    # Exact, not "key not in err": a message widened to quote the offending
+    # character or the data part around it would still pass a containment
+    # check, and that character is the key.
     assert captured.err == f"mnemocode: error: {message}\n"
 
 
@@ -597,22 +595,6 @@ def _encode_out(argv, capsys):
     return capsys.readouterr().out
 
 
-def _answer_prompt(master, text):
-    """Type an answer once the prompt appears, as a user would."""
-
-    def respond():
-        os.read(master, 4096)
-        os.write(master, f"{text}\n".encode())
-
-    threading.Thread(target=respond, daemon=True).start()
-
-
-def _prompt_pty(monkeypatch):
-    master, slave = pty.openpty()
-    monkeypatch.setattr(secretio, "_TTY_PATH", os.ttyname(slave))
-    return master
-
-
 def test_every_input_source_yields_the_same_mnemonic(tmp_path, monkeypatch, capsys):
     baseline = _encode_out(["encode", HEX_KEY], capsys)
 
@@ -669,7 +651,7 @@ def test_a_positional_and_input_together_are_rejected(capsys):
     assert main(["encode", HEX_KEY, "--input", f"pass:{HEX_KEY}"]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert captured.err.startswith("mnemocode: error: ")
+    assert "not both" in captured.err
     assert HEX_KEY not in captured.err
 
 
@@ -709,18 +691,16 @@ def test_output_fd_receives_the_result(tmp_path, capsys):
     assert len(path.read_text().split()) == 12
 
 
-def test_encode_prompts_when_no_key_is_given(monkeypatch, capsys):
-    master = _prompt_pty(monkeypatch)
-    _answer_prompt(master, HEX_KEY)
+def test_encode_prompts_when_no_key_is_given(prompt_terminal, capsys):
+    prompt_terminal.answer(HEX_KEY)
     assert main(["encode"]) == 0
     captured = capsys.readouterr()
     assert len(captured.out.split()) == 12
     assert "key:" not in captured.out
 
 
-def test_decode_prompts_when_no_mnemonic_is_given(monkeypatch, capsys):
-    master = _prompt_pty(monkeypatch)
-    _answer_prompt(master, ZEROS_12)
+def test_decode_prompts_when_no_mnemonic_is_given(prompt_terminal, capsys):
+    prompt_terminal.answer(ZEROS_12)
     assert main(["decode"]) == 0
     assert capsys.readouterr().out == "00" * 16 + "\n"
 
@@ -776,11 +756,27 @@ def test_an_unknown_output_sink_exits_two_without_echoing_it(capsys):
         "--input={key}",
         "--input=pass:{key}",
         "--input=fd:{key}",
-        "--output={key}",
-        "--output=fd:{key}",
     ],
 )
-def test_no_io_option_shape_puts_key_material_on_a_stream(shape, command, capsys):
+def test_no_input_option_shape_puts_key_material_on_a_stream(shape, command, capsys):
+    try:
+        main([*command, shape.format(key=IDENTITY)])
+    except SystemExit:
+        pass
+    captured = capsys.readouterr()
+    streams = captured.out + captured.err
+    assert IDENTITY not in streams
+    assert not [f for f in _key_fragments() if f in streams]
+
+
+# The sink shapes need a secret of their own: with none supplied the run dies
+# at the prompt before write_sink is ever reached, and the sweep asserts
+# nothing about sinks at all.
+@pytest.mark.parametrize(
+    "command", [["encode", HEX_KEY], ["decode", *ZEROS_12.split()]]
+)
+@pytest.mark.parametrize("shape", ["--output={key}", "--output=fd:{key}"])
+def test_no_output_option_shape_puts_key_material_on_a_stream(shape, command, capsys):
     try:
         main([*command, shape.format(key=IDENTITY)])
     except SystemExit:
@@ -817,3 +813,102 @@ def test_dev_stdout_follows_what_standard_output_is_attached_to(tmp_path):
     assert to_file.returncode == 2
     assert "refusing to overwrite" in to_file.stderr
     assert redirected.read_text() == ""
+
+
+@pytest.mark.parametrize("content", ["", "\n\n", "# only a comment\n"])
+def test_decode_reports_a_source_holding_no_mnemonic(tmp_path, capsys, content):
+    path = tmp_path / "phrase.txt"
+    path.write_text(content)
+    assert main(["decode", "--input", f"file:{path}"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no mnemonic" in captured.err
+
+
+@pytest.mark.parametrize("content", ["", "\n\n", "# only a comment\n"])
+def test_encode_reports_a_source_holding_no_key(tmp_path, capsys, content):
+    path = tmp_path / "key.txt"
+    path.write_text(content)
+    assert main(["encode", "--input", f"file:{path}"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "no key" in captured.err
+
+
+def test_output_refuses_a_directory(tmp_path, capsys):
+    assert main(["encode", HEX_KEY, "--output", f"file:{tmp_path}"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert str(tmp_path) in captured.err
+
+
+def test_an_unusable_descriptor_sink_names_the_number(capsys):
+    assert main(["encode", HEX_KEY, "--output", "fd:9999"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "9999" in captured.err
+    assert HEX_KEY not in captured.err
+
+
+def test_a_non_numeric_descriptor_sink_is_reported_in_our_own_wording(capsys):
+    assert main(["encode", HEX_KEY, "--output", "fd:x"]) == 2
+    assert "descriptor number" in capsys.readouterr().err
+
+
+def test_an_unwritable_output_path_names_only_the_path(tmp_path, capsys):
+    missing = tmp_path / "no-such-dir" / "key.txt"
+    assert main(["encode", HEX_KEY, "--output", f"file:{missing}"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert str(missing) in captured.err
+    assert HEX_KEY not in captured.err
+
+
+def test_a_binary_source_names_the_path_and_shows_no_byte_of_it(tmp_path, capsys):
+    """The default UnicodeDecodeError text quotes an offending byte and its
+    offset, and those bytes are the key."""
+    path = tmp_path / "key.bin"
+    path.write_bytes(bytes(range(256)))
+    assert main(["encode", "--input", f"file:{path}"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert str(path) in captured.err
+    assert "not UTF-8 text" in captured.err
+    assert "0x" not in captured.err
+
+
+@pytest.mark.parametrize(
+    "command", [["encode", ""], ["decode", ""]]
+)
+def test_an_empty_positional_still_conflicts_with_input(command, capsys):
+    """An empty argument is one the caller supplied, so it is a conflict, not
+    a value that lets --input win by default."""
+    assert main([*command, "--input", f"pass:{HEX_KEY}"]) == 2
+    assert "not both" in capsys.readouterr().err
+
+
+def test_every_input_source_yields_the_same_key_for_decode(
+    tmp_path, monkeypatch, capsys
+):
+    def out(argv):
+        assert main(argv) == 0
+        return capsys.readouterr().out
+
+    baseline = out(["decode", *ZEROS_12.split()])
+    assert out(["decode", "--input", f"pass:{ZEROS_12}"]) == baseline
+
+    monkeypatch.setenv("MNEMOCODE_PHRASE", ZEROS_12)
+    assert out(["decode", "--input", "env:MNEMOCODE_PHRASE"]) == baseline
+
+    path = tmp_path / "phrase.txt"
+    path.write_text(f"{ZEROS_12}\n")
+    assert out(["decode", "--input", f"file:{path}"]) == baseline
+
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        assert out(["decode", "--input", f"fd:{fd}"]) == baseline
+    finally:
+        os.close(fd)
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO(ZEROS_12))
+    assert out(["decode", "--input", "stdin"]) == baseline

@@ -128,9 +128,9 @@ key error and the exit status stays 2 without a second convention.
 
 `cli.py` stays argument parsing plus two handlers. A new module owns the grammar,
 the descriptor and terminal handling, and the open sequence above, and hands back
-a string on the way in and takes one on the way out. That keeps `os`, `stat`,
-`termios` and `getpass` out of the parsing layer and lets the resolution logic be
-tested without building a parser.
+a string on the way in and takes one on the way out. That keeps `os`, `stat`
+and `termios` out of the parsing layer and lets the resolution logic be tested
+without building a parser.
 
 ### Prompt on the controlling terminal, not on stdin
 

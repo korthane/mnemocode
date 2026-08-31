@@ -6,20 +6,31 @@ so the security caveats attached to each form are already documented for users.
 
 import os
 import stat
-import termios
 import sys
 
 SOURCE_FORMS = ("pass:", "env:", "file:", "fd:", "stdin")
 
 
+def _descriptor(number: str, what: str) -> int:
+    # isascii guards the isdigit check: "\u00b2".isdigit() is true but int()
+    # rejects it, which would surface a raw Python message instead of ours.
+    if not (number.isascii() and number.isdigit()):
+        raise ValueError(f"an fd: {what} needs a descriptor number")
+    return int(number)
+
+
 def _read_fd(number: str) -> str:
-    if not number.isdigit():
-        raise ValueError("an fd: source needs a descriptor number")
-    fd = int(number)
+    fd = _descriptor(number, "source")
     try:
         # closefd=False: the descriptor is the caller's, not ours to close.
         with open(fd, encoding="utf-8", closefd=False) as stream:
             return stream.read()
+    except UnicodeDecodeError:
+        # The default message quotes an offending byte and its offset, and
+        # those bytes are the secret.
+        raise ValueError(
+            f"cannot read file descriptor {fd}: not UTF-8 text"
+        ) from None
     except OSError as exc:
         raise ValueError(
             f"cannot read file descriptor {fd}: {exc.strerror}"
@@ -30,6 +41,8 @@ def _read_file(path: str) -> str:
     try:
         with open(path, encoding="utf-8") as stream:
             return stream.read()
+    except UnicodeDecodeError:
+        raise ValueError(f"cannot read {path}: not UTF-8 text") from None
     except OSError as exc:
         raise ValueError(f"cannot read {path}: {exc.strerror}") from None
 
@@ -52,7 +65,10 @@ def read_source(source: str) -> str:
             names the source but never its contents.
     """
     if source == "stdin":
-        return sys.stdin.read()
+        try:
+            return sys.stdin.read()
+        except UnicodeDecodeError:
+            raise ValueError("cannot read standard input: not UTF-8 text") from None
     if source.startswith("pass:"):
         return source.removeprefix("pass:")
     if source.startswith("env:"):
@@ -107,8 +123,6 @@ def secret_words(text: str) -> list[str]:
 
 SINK_FORMS = ("file:", "fd:", "stdout")
 
-_WRITABLE_EXISTING = (stat.S_ISFIFO, stat.S_ISCHR)
-
 
 def _open_existing_sink(path: str) -> int:
     """Open a path that already exists, refusing anything but a pipe or device.
@@ -117,13 +131,16 @@ def _open_existing_sink(path: str) -> int:
     still intact when we refuse it, and judged by fstat on the descriptor
     rather than by a second look at the path, so a swap in between cannot
     redirect the secret.
+
+    Symlinks are followed on purpose: `/dev/stdout` is one, so O_NOFOLLOW here
+    would refuse the very path the spec requires us to write to.
     """
     try:
         fd = os.open(path, os.O_WRONLY)
     except OSError as exc:
         raise ValueError(f"cannot write {path}: {exc.strerror}") from None
     mode = os.fstat(fd).st_mode
-    if not any(is_writable(mode) for is_writable in _WRITABLE_EXISTING):
+    if not (stat.S_ISFIFO(mode) or stat.S_ISCHR(mode)):
         os.close(fd)
         raise ValueError(f"refusing to overwrite {path}")
     return fd
@@ -131,8 +148,9 @@ def _open_existing_sink(path: str) -> int:
 
 def _open_file_sink(path: str) -> int:
     try:
-        # O_EXCL also fails on a symlink, whatever it points at, so a planted
-        # link cannot steer a new key file elsewhere.
+        # O_EXCL fails on an existing symlink whatever it points at, so a
+        # planted link cannot make us *create* a key file elsewhere. It says
+        # nothing about the existing-path branch below, which does follow one.
         return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         return _open_existing_sink(path)
@@ -160,14 +178,12 @@ def write_sink(sink: str, text: str) -> None:
         print(text)
         return
     if sink.startswith("fd:"):
-        number = sink.removeprefix("fd:")
-        if not number.isdigit():
-            raise ValueError("an fd: sink needs a descriptor number")
+        fd = _descriptor(sink.removeprefix("fd:"), "sink")
         try:
-            _write_fd(int(number), text, closefd=False)
+            _write_fd(fd, text, closefd=False)
         except OSError as exc:
             raise ValueError(
-                f"cannot write file descriptor {number}: {exc.strerror}"
+                f"cannot write file descriptor {fd}: {exc.strerror}"
             ) from None
         return
     if sink.startswith("file:"):
@@ -176,6 +192,12 @@ def write_sink(sink: str, text: str) -> None:
         try:
             _write_fd(fd, text, closefd=True)
         except OSError as exc:
+            # _write_fd owns the descriptor once open() wraps it, but a failure
+            # in open() itself leaves it ours to close.
+            try:
+                os.close(fd)
+            except OSError:
+                pass
             raise ValueError(f"cannot write {path}: {exc.strerror}") from None
         return
     raise ValueError(f"unknown output sink; use one of {', '.join(SINK_FORMS)}")
@@ -186,10 +208,19 @@ def write_sink(sink: str, text: str) -> None:
 # the module's other descriptor work already lives.
 _TTY_PATH = "/dev/tty"
 
-# TCSAFLUSH, as getpass uses, discards anything typed before the prompt: those
-# keystrokes were echoed, so accepting them as the secret would defeat the
-# point. TCSASOFT is the BSD companion getpass adds where it exists.
-_TCSETATTR = termios.TCSAFLUSH | getattr(termios, "TCSASOFT", 0)
+
+def _read_line(fd: int) -> str:
+    """Read the entry a user submits at the prompt.
+
+    Enter ends the entry, so this stops at the first newline rather than
+    reading to EOF. It loops because a single os.read need not return the
+    whole line: an entry ended with Ctrl-D arrives without a newline, and
+    taking only the first chunk would silently shorten the secret.
+    """
+    chunks: list[bytes] = []
+    while (chunk := os.read(fd, 4096)) and not chunk.endswith(b"\n"):
+        chunks.append(chunk)
+    return b"".join([*chunks, chunk]).decode(errors="replace")
 
 
 def prompt_secret(label: str) -> str:
@@ -201,6 +232,18 @@ def prompt_secret(label: str) -> str:
     Raises:
         ValueError: when no terminal is available, or nothing was entered.
     """
+    # Imported here so that a platform without termios still runs every path
+    # that does not prompt, rather than failing at import.
+    try:
+        import termios
+    except ImportError:
+        raise ValueError(
+            f"no terminal is available to read the {label} from; use --input"
+        ) from None
+    # TCSAFLUSH discards anything typed before the prompt: those keystrokes
+    # were echoed, so accepting them as the secret would defeat the point.
+    # TCSASOFT is the BSD companion getpass adds where it exists.
+    when = termios.TCSAFLUSH | getattr(termios, "TCSASOFT", 0)
     try:
         # O_NOCTTY so prompting never makes this terminal the controlling one.
         # Raw descriptor I/O because a tty is not seekable, which rules out the
@@ -218,11 +261,11 @@ def prompt_secret(label: str) -> str:
     silenced = termios.tcgetattr(fd)
     silenced[3] &= ~termios.ECHO
     try:
-        termios.tcsetattr(fd, _TCSETATTR, silenced)
+        termios.tcsetattr(fd, when, silenced)
         os.write(fd, f"{label}: ".encode())
-        entered = os.read(fd, 4096).decode()
+        entered = _read_line(fd)
     finally:
-        termios.tcsetattr(fd, _TCSETATTR, restore)
+        termios.tcsetattr(fd, when, restore)
         # The newline the user typed was swallowed along with the echo.
         os.write(fd, b"\n")
         os.close(fd)

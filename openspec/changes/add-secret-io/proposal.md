@@ -59,6 +59,6 @@ governs the new sources without rewording.
 - `tests/`: new coverage per source and sink, including that no source puts a
   secret on a stream a third party can read, extending the existing no-leak
   property tests.
-- No new dependencies; `os`, `stat` and `getpass` are standard library.
+- No new dependencies; `os`, `stat` and `termios` are standard library.
 - Not addressed: a `>` redirect's file mode is the shell's to choose, so it is
   documented rather than fixed.

@@ -70,9 +70,11 @@
 - [x] 6.1 Ensure source and sink errors name only the path, descriptor number or
       variable name, and verify tests on an unreadable file, a bad descriptor and
       an unset variable each name the source and contain no secret.
-- [x] 6.2 Extend the existing no-leak property test to cover every new source and
-      sink, and verify no fragment of a real key reaches standard output or
-      standard error on any failing path.
+- [x] 6.2 Extend the existing no-leak property test to cover the new source and
+      sink shapes that put a key where a name belongs — `env:` and `file:` are
+      excluded, since a caller who types the key as a variable or a path has
+      already leaked it — and verify no fragment of a real key reaches standard
+      output or standard error on any failing path.
 - [x] 6.3 Verify a successful run with `--output` naming a file or descriptor
       leaves standard output empty.
 

@@ -1,6 +1,5 @@
 import io
 import os
-import pty
 import stat
 import sys
 import termios
@@ -233,77 +232,47 @@ def test_file_sink_writes_to_a_character_device():
     write_sink("file:/dev/null", "result")
 
 
-def _prompt_pty(monkeypatch) -> int:
-    """Point the prompt at a fresh pty and return its master descriptor."""
-    master, slave = pty.openpty()
-    monkeypatch.setattr(secretio, "_TTY_PATH", os.ttyname(slave))
-    return master
-
-
-def _type_after_prompt(master: int, text: str) -> tuple[threading.Thread, list[str]]:
-    """Answer the prompt the way a user does: wait for it, then type.
-
-    Typing before the prompt appears would be discarded: the prompt disables
-    echo with TCSAFLUSH, which drops anything already in the input queue.
-    """
-    seen: list[str] = []
-
-    def respond() -> None:
-        seen.append(os.read(master, 4096).decode())
-        os.write(master, f"{text}\n".encode())
-
-    thread = threading.Thread(target=respond, daemon=True)
-    thread.start()
-    return thread, seen
-
-
-def _drain(fd: int) -> str:
-    os.set_blocking(fd, False)
-    try:
-        return os.read(fd, 4096).decode()
-    except BlockingIOError:
-        return ""
-
-
-def test_prompt_reads_the_secret_from_the_terminal(monkeypatch):
-    master = _prompt_pty(monkeypatch)
-    _type_after_prompt(master, KEY)
+def test_prompt_reads_the_secret_from_the_terminal(prompt_terminal):
+    prompt_terminal.answer(KEY)
     assert prompt_secret("key") == KEY
 
 
-def test_prompt_writes_its_label_to_the_terminal(monkeypatch):
-    master = _prompt_pty(monkeypatch)
-    thread, seen = _type_after_prompt(master, KEY)
+def test_prompt_writes_its_label_to_the_terminal(prompt_terminal):
+    thread = prompt_terminal.answer(KEY)
     prompt_secret("key")
     thread.join(timeout=5)
-    assert "key" in seen[0]
+    assert "key" in prompt_terminal.prompts[0]
 
 
-def test_prompt_does_not_echo_the_typed_secret(monkeypatch):
-    master = _prompt_pty(monkeypatch)
-    thread, _ = _type_after_prompt(master, KEY)
+def test_prompt_does_not_echo_the_typed_secret(prompt_terminal):
+    thread = prompt_terminal.answer(KEY)
     prompt_secret("key")
     thread.join(timeout=5)
-    assert KEY not in _drain(master)
+    assert KEY not in prompt_terminal.drain()
 
 
-def test_prompt_restores_the_terminal_echo_setting(monkeypatch):
-    master = _prompt_pty(monkeypatch)
+def test_prompt_restores_the_terminal_echo_setting(prompt_terminal):
     watcher = os.open(secretio._TTY_PATH, os.O_RDWR | os.O_NOCTTY)
     try:
         before = termios.tcgetattr(watcher)[3]
-        _type_after_prompt(master, KEY)
+        prompt_terminal.answer(KEY)
         prompt_secret("key")
         assert termios.tcgetattr(watcher)[3] == before
     finally:
         os.close(watcher)
 
 
-def test_prompt_does_not_reach_standard_output(monkeypatch, capsys):
-    master = _prompt_pty(monkeypatch)
-    _type_after_prompt(master, KEY)
+def test_prompt_does_not_reach_standard_output(prompt_terminal, capsys):
+    prompt_terminal.answer(KEY)
     prompt_secret("key")
     assert capsys.readouterr().out == ""
+
+
+def test_prompt_accepts_an_entry_ended_with_eof(prompt_terminal):
+    """Ctrl-D submits the line without a newline, so the read must not stop
+    at the first chunk and discard it."""
+    prompt_terminal.answer_with_eof(KEY)
+    assert prompt_secret("key") == KEY
 
 
 def test_prompt_without_a_terminal_is_an_error(monkeypatch, tmp_path):
@@ -322,8 +291,35 @@ def test_prompt_on_something_that_is_not_a_terminal_is_an_error(
         prompt_secret("key")
 
 
-def test_prompt_rejects_an_empty_entry(monkeypatch):
-    master = _prompt_pty(monkeypatch)
-    _type_after_prompt(master, "")
+def test_prompt_rejects_an_empty_entry(prompt_terminal):
+    prompt_terminal.answer("")
     with pytest.raises(ValueError):
         prompt_secret("key")
+
+
+def test_file_sink_refuses_a_symlink_to_a_regular_file(tmp_path):
+    """O_EXCL stops a planted link creating a key file elsewhere, but the
+    existing-path branch follows one; what protects the target here is the
+    fstat refusal, not the link check."""
+    target = tmp_path / "target.txt"
+    target.write_text("original")
+    link = tmp_path / "key.txt"
+    link.symlink_to(target)
+    with pytest.raises(ValueError, match="refusing to overwrite"):
+        write_sink(f"file:{link}", "result")
+    assert target.read_text() == "original"
+
+
+def test_file_sink_refuses_a_dangling_symlink(tmp_path):
+    link = tmp_path / "key.txt"
+    link.symlink_to(tmp_path / "absent.txt")
+    with pytest.raises(ValueError, match=str(link)):
+        write_sink(f"file:{link}", "result")
+
+
+def test_file_sink_follows_a_symlink_to_a_character_device(tmp_path):
+    # Following is deliberate: /dev/stdout is itself a symlink, so refusing
+    # links here would refuse the path the spec requires us to write to.
+    link = tmp_path / "out"
+    link.symlink_to("/dev/null")
+    write_sink(f"file:{link}", "result")
