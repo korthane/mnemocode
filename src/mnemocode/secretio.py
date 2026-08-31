@@ -188,11 +188,22 @@ def _open_file_sink(path: str) -> tuple[int, bool]:
         # O_EXCL fails on an existing symlink whatever it points at, so a
         # planted link cannot make us *create* a key file elsewhere. It says
         # nothing about the existing-path branch below, which does follow one.
-        return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), True
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except FileExistsError:
         return _open_existing_sink(path), False
     except OSError as exc:
         raise ValueError(f"cannot write {path}: {exc.strerror}") from None
+    try:
+        # The creation mode above is only a ceiling: the umask still clears
+        # bits from it, so a umask of 0277 would leave the key file read-only.
+        # The spec asks for 0600 whatever the umask is.
+        os.fchmod(fd, 0o600)
+    except OSError as exc:
+        os.close(fd)
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+        raise ValueError(f"cannot write {path}: {exc.strerror}") from None
+    return fd, True
 
 
 def _write_fd(fd: int, text: str, *, closefd: bool) -> None:

@@ -191,6 +191,31 @@ def test_file_sink_creates_a_private_file(tmp_path):
     assert path.read_text() == "result\n"
 
 
+def test_file_sink_creates_0600_under_a_umask_that_masks_owner_bits(tmp_path):
+    path = tmp_path / "key.txt"
+    # 0277 clears the owner write bit the creation mode asks for, which the
+    # spec's own umask 022 scenario cannot detect.
+    previous = os.umask(0o277)
+    try:
+        write_sink(f"file:{path}", "result")
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_file_sink_removes_the_new_file_when_the_mode_cannot_be_set(
+    tmp_path, monkeypatch
+):
+    def refuse(*args, **kwargs):
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    monkeypatch.setattr(os, "fchmod", refuse)
+    path = tmp_path / "key.txt"
+    with pytest.raises(ValueError, match=str(path)):
+        write_sink(f"file:{path}", "result")
+    assert not path.exists()
+
+
 def test_file_sink_refuses_an_existing_regular_file(tmp_path):
     path = tmp_path / "key.txt"
     path.write_text("original")
