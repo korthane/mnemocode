@@ -31,8 +31,16 @@ copied out of a text file needs no reflowing. Words may be given in any case,
 and as separate arguments or one quoted phrase — though, like a bare key
 argument, that puts the phrase on the command line.
 
-Errors name a bad word by its position rather than quoting it, and never echo
-the key or the phrase, so the diagnostics are safe to paste into a bug report.
+That applies to a phrase read from a source, not to one typed at the prompt:
+there Enter submits, so a phrase pasted with its line breaks is read only as
+far as the first one. Use `--input file:` for a wrapped phrase.
+
+Errors name a bad word or character by its position rather than quoting it,
+counting from the start of the string as you gave it. No message echoes the
+key or the phrase, so the diagnostics are safe to paste into a bug report. The
+one thing a message does repeat is the source you named — a path, a descriptor
+number, a variable name — so `--input env:` given the key itself in place of a
+variable name will show it.
 
 ## Where the key comes from
 
@@ -90,7 +98,7 @@ mnemocode decode --format age --input file:phrase.txt --output file:keys.txt
 **A shell redirect creates its file with your umask** — typically `0644`, which
 is world-readable — so `mnemocode decode ... > keys.txt` leaves an age identity
 readable by every user on the machine. `--output file:` creates the file with
-mode `0600` instead, and refuses to overwrite a file that already exists rather
+mode `0600` instead, and refuses to overwrite an existing regular file rather
 than destroying a key you still have.
 
 Writing to a named pipe is allowed, and blocks until a reader opens the other

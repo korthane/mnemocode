@@ -233,9 +233,11 @@ def test_decode_age_reports_a_whitespace_only_phrase_as_zero_words(capsys):
             bech32_encode("age-secret-key-", bytes(31)).upper(),
             "age secret key is 31 bytes; must be 32 bytes",
         ),
+        # Both positions count from the start of the string as given, so the
+        # 1-based index of the character each case substitutes.
         (
             IDENTITY[:20] + "B" + IDENTITY[21:],
-            "not a bech32 data character at position 5",
+            "not a bech32 data character at position 21",
         ),
         (
             IDENTITY.replace("K", "\u212a", 1),
@@ -538,7 +540,7 @@ def test_decode_age_still_checks_the_bip39_checksum(capsys):
     [(["encode", IDENTITY], "abandon"), (["decode", ZEROS_24], "AGE-SECRET-KEY-1")],
 )
 def test_format_option_may_follow_the_positionals(args, expected_prefix, capsys):
-    """decode's nargs="+" makes this the ordering most likely to break."""
+    """decode's nargs="*" makes this the ordering most likely to break."""
     assert main([*args, "--format", "age"]) == 0
     assert capsys.readouterr().out.strip().startswith(expected_prefix)
 
@@ -912,3 +914,45 @@ def test_every_input_source_yields_the_same_key_for_decode(
 
     monkeypatch.setattr(sys, "stdin", io.StringIO(ZEROS_12))
     assert out(["decode", "--input", "stdin"]) == baseline
+
+
+def test_a_piped_key_is_ignored_without_input():
+    """The README promises stdin is read only when asked for. Routing the
+    no-argument case through stdin would satisfy every other test here.
+    """
+    result = subprocess.run(
+        [sys.executable, "-m", "mnemocode", "encode"],
+        input=f"{HEX_KEY}\n",
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "--input" in result.stderr
+    assert result.stdout == ""
+    assert HEX_KEY not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["encode", "--input", "fd:2147483648"],
+        ["encode", HEX_KEY, "--output", "fd:2147483648"],
+    ],
+)
+def test_an_out_of_range_descriptor_is_an_error_not_a_traceback(args, capsys):
+    """open() hands an int this large to the path lookup and raises
+    TypeError, which main does not catch."""
+    assert main(args) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "descriptor number" in captured.err
+
+
+def test_a_prompted_mnemonic_starting_with_a_hash_is_not_a_comment(
+    prompt_terminal, capsys
+):
+    """The prompt reads one line, so the source stream rules do not apply to
+    it: a bad word must be reported as a word, not as an empty source."""
+    prompt_terminal.answer("# not a word")
+    assert main(["decode"]) == 2
+    assert "no mnemonic" not in capsys.readouterr().err

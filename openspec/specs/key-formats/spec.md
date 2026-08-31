@@ -13,8 +13,8 @@ The `encode` and `decode` subcommands SHALL each accept a `--format` option
 choosing the text encoding of the key. The supported values SHALL be `hex` and
 `age`, and the default SHALL be `hex`.
 
-On `encode`, `--format` describes the key given on the command line. On
-`decode`, it describes the key printed to standard output. A mnemonic carries no
+On `encode`, `--format` describes the key however it is supplied. On `decode`,
+it describes the key written to the selected sink. A mnemonic carries no
 record of the format it was produced from, so `decode` SHALL NOT infer one.
 
 #### Scenario: Format defaults to hex

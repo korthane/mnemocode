@@ -55,15 +55,18 @@
 ## 5. CLI wiring
 
 - [x] 5.1 Add `--input` and `--output` to both subcommands and make the
-      positional optional, and verify existing tests still pass unchanged, since
-      they exercise the default path.
+      positional optional, and verify existing tests still pass, since they
+      exercise the default path — apart from the three age and bech32 message
+      expectations the diagnostic redaction in 6.1 rewrites.
 - [x] 5.2 Reject a positional and `--input` given together, checked in the
       handler so the message uses the existing `mnemocode: error: …` form, and
       verify a test asserts exit 2 and that wording.
 - [x] 5.3 Route the resolved secret into the existing handlers and the result
-      into the selected sink, leaving `parse_hex_key`, `parse_age_secret_key` and
-      the BIP-39 code untouched, and verify `git diff` shows no change to those
-      functions.
+      into the selected sink, leaving the parsing and BIP-39 logic untouched, and
+      verify `git diff` shows no change to what `parse_hex_key`,
+      `parse_age_secret_key` and the BIP-39 code compute. Their diagnostics do
+      change, under 6.1: `parse_age_secret_key` and `bech32_decode` quoted a
+      fragment of the key back.
 
 ## 6. Diagnostics carry no secret
 

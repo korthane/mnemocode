@@ -160,7 +160,10 @@ def bech32_decode(text: str) -> tuple[str, bytes]:
         )
 
     data = []
-    for position, char in enumerate(encoded, start=1):
+    # Counted from the start of the whole string, as the other two position
+    # messages are: a position measured from the data part would send the user
+    # counting into the wrong place.
+    for position, char in enumerate(encoded, start=separator + 2):
         value = CHARSET.find(char)
         if value < 0:
             # By position, never the character: this text is the secret, and

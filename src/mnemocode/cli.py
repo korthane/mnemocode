@@ -55,8 +55,9 @@ def reject_double_input(given: bool, source: str | None, label: str) -> None:
     message it generates for that case reads poorly. Raising keeps the wording
     consistent with every other key error.
 
-    Callers pass presence, not truthiness: an empty positional is still one the
-    caller supplied, and `encode ""` alone already reports an empty key.
+    Encode passes presence, not truthiness: an empty positional is still one
+    the caller supplied, and `encode ""` alone already reports an empty key.
+    Decode's nargs="*" cannot express that difference, so it passes a bool.
     """
     if given and source is not None:
         raise ValueError(f"give the {label} as an argument or with --input, not both")
@@ -80,14 +81,17 @@ def run_encode(args: argparse.Namespace) -> int:
 
 
 def run_decode(args: argparse.Namespace) -> int:
-    reject_double_input(args.words != [], args.input_source, "mnemonic")
+    reject_double_input(bool(args.words), args.input_source, "mnemonic")
     if args.input_source is not None:
         words = secret_words(read_source(args.input_source))
     elif args.words:
         # Re-split so a single quoted phrase and separate word arguments both work.
         words = " ".join(args.words).split()
     else:
-        words = secret_words(prompt_secret("mnemonic"))
+        # Split, not secret_words: the stream rules describe a source, and a
+        # phrase typed at the prompt is a single line the prompt already
+        # stripped and refused to accept empty.
+        words = prompt_secret("mnemonic").split()
     if args.format == "age" and len(words) != AGE_WORD_COUNT:
         raise ValueError(
             f"an age key is always {AGE_WORD_COUNT} words; this mnemonic has "

@@ -4,11 +4,16 @@ The source grammar is OpenSSL's, as used by its -passin and -passout options,
 so the security caveats attached to each form are already documented for users.
 """
 
+import contextlib
 import os
 import stat
 import sys
 
 SOURCE_FORMS = ("pass:", "env:", "file:", "fd:", "stdin")
+
+# A descriptor is a C int. open() hands anything larger to the path lookup
+# instead, raising TypeError, which no caller here is prepared to catch.
+_MAX_DESCRIPTOR = 2**31 - 1
 
 
 def _descriptor(number: str, what: str) -> int:
@@ -16,7 +21,10 @@ def _descriptor(number: str, what: str) -> int:
     # rejects it, which would surface a raw Python message instead of ours.
     if not (number.isascii() and number.isdigit()):
         raise ValueError(f"an fd: {what} needs a descriptor number")
-    return int(number)
+    value = int(number)
+    if value > _MAX_DESCRIPTOR:
+        raise ValueError(f"an fd: {what} needs a descriptor number")
+    return value
 
 
 def _read_fd(number: str) -> str:
@@ -69,6 +77,10 @@ def read_source(source: str) -> str:
             return sys.stdin.read()
         except UnicodeDecodeError:
             raise ValueError("cannot read standard input: not UTF-8 text") from None
+        except OSError as exc:
+            raise ValueError(
+                f"cannot read standard input: {exc.strerror}"
+            ) from None
     if source.startswith("pass:"):
         return source.removeprefix("pass:")
     if source.startswith("env:"):
@@ -146,14 +158,15 @@ def _open_existing_sink(path: str) -> int:
     return fd
 
 
-def _open_file_sink(path: str) -> int:
+def _open_file_sink(path: str) -> tuple[int, bool]:
+    """Open a sink path, reporting whether this call created it."""
     try:
         # O_EXCL fails on an existing symlink whatever it points at, so a
         # planted link cannot make us *create* a key file elsewhere. It says
         # nothing about the existing-path branch below, which does follow one.
-        return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), True
     except FileExistsError:
-        return _open_existing_sink(path)
+        return _open_existing_sink(path), False
     except OSError as exc:
         raise ValueError(f"cannot write {path}: {exc.strerror}") from None
 
@@ -175,7 +188,20 @@ def write_sink(sink: str, text: str) -> None:
             regular file. The message names the sink but never the text.
     """
     if sink == "stdout":
-        print(text)
+        try:
+            print(text)
+            # print only fills the buffer. Without this flush a broken pipe
+            # surfaces at interpreter shutdown, long after we reported success.
+            sys.stdout.flush()
+        except OSError as exc:
+            # The buffer still holds the text and the interpreter would retry
+            # it while shutting down; send that retry to /dev/null so the
+            # failure is reported once, here.
+            with contextlib.suppress(OSError, ValueError):
+                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+            raise ValueError(
+                f"cannot write standard output: {exc.strerror}"
+            ) from None
         return
     if sink.startswith("fd:"):
         fd = _descriptor(sink.removeprefix("fd:"), "sink")
@@ -188,16 +214,16 @@ def write_sink(sink: str, text: str) -> None:
         return
     if sink.startswith("file:"):
         path = sink.removeprefix("file:")
-        fd = _open_file_sink(path)
+        fd, created = _open_file_sink(path)
         try:
             _write_fd(fd, text, closefd=True)
         except OSError as exc:
-            # _write_fd owns the descriptor once open() wraps it, but a failure
-            # in open() itself leaves it ours to close.
-            try:
-                os.close(fd)
-            except OSError:
-                pass
+            # A part-written key file looks like a whole one, and the caller
+            # would find out only on restoring from it. Only a file this call
+            # created is ours to remove; a pre-existing pipe or device is not.
+            if created:
+                with contextlib.suppress(OSError):
+                    os.unlink(path)
             raise ValueError(f"cannot write {path}: {exc.strerror}") from None
         return
     raise ValueError(f"unknown output sink; use one of {', '.join(SINK_FORMS)}")

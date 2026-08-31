@@ -88,6 +88,11 @@ A useful POSIX guarantee falls out of step one: `O_CREAT|O_EXCL` fails with
 symlink planted in a shared directory cannot steer the newly created key file to
 an attacker's path.
 
+That guarantee covers step one only. The `EEXIST` branch does follow a symlink,
+deliberately: `/dev/stdout` is one, so refusing links there would refuse the
+path the `file:` sink exists for. What protects the target on that branch is the
+`fstat`, which refuses a link to a regular file exactly as it refuses the file.
+
 **Alternative considered:** always refuse an existing path. Rejected — it breaks
 `file:/dev/stdout` and named pipes, which are the cases that make `file:` useful
 beyond a plain path.

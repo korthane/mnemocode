@@ -1,3 +1,4 @@
+import errno
 import io
 import os
 import stat
@@ -323,3 +324,125 @@ def test_file_sink_follows_a_symlink_to_a_character_device(tmp_path):
     link = tmp_path / "out"
     link.symlink_to("/dev/null")
     write_sink(f"file:{link}", "result")
+
+
+def test_prompt_reads_an_entry_that_arrives_in_two_reads(prompt_terminal):
+    """Pinned separately from the Ctrl-D case: there the whole entry still
+    fits one os.read, so a reader that took only the first chunk would pass
+    that test while silently shortening a longer secret."""
+    prompt_terminal.answer_in_two_reads(KEY[:16], KEY[16:])
+    assert prompt_secret("key") == KEY
+
+
+def test_prompt_replaces_bytes_that_are_not_utf8(prompt_terminal):
+    """Strict decoding would raise UnicodeDecodeError, a ValueError that main
+    prints — quoting a byte of the secret and its offset."""
+    prompt_terminal.answer_bytes(b"\xff\xfe deadbeef\n")
+    assert prompt_secret("key").endswith("deadbeef")
+
+
+def test_prompt_without_termios_is_an_error(monkeypatch):
+    # A platform with no termios must still reach our message rather than an
+    # ImportError traceback.
+    monkeypatch.setitem(sys.modules, "termios", None)
+    with pytest.raises(ValueError, match="--input"):
+        prompt_secret("key")
+
+
+def test_an_fd_source_too_large_for_a_descriptor_is_an_error():
+    # open() hands an int this large to the path lookup, raising TypeError,
+    # which no caller catches.
+    with pytest.raises(ValueError, match="descriptor number"):
+        read_source(f"fd:{2**31}")
+
+
+def test_an_fd_sink_too_large_for_a_descriptor_is_an_error():
+    with pytest.raises(ValueError, match="descriptor number"):
+        write_sink(f"fd:{2**31}", "result")
+
+
+def test_a_non_ascii_digit_is_not_a_descriptor():
+    # "²".isdigit() is true, so isdigit alone would let int() raise and quote
+    # the value back.
+    with pytest.raises(ValueError, match="an fd: source needs a descriptor number"):
+        read_source("fd:²")
+
+
+def test_an_fd_source_of_non_utf8_bytes_names_the_descriptor(tmp_path):
+    path = tmp_path / "binary"
+    path.write_bytes(b"\xff\xfe\x00")
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        with pytest.raises(ValueError, match="not UTF-8 text") as caught:
+            read_source(f"fd:{fd}")
+    finally:
+        os.close(fd)
+    assert "�" not in str(caught.value)
+
+
+def test_a_stdin_source_of_non_utf8_bytes_names_the_source(monkeypatch):
+    monkeypatch.setattr(
+        sys, "stdin", io.TextIOWrapper(io.BytesIO(b"\xff\xfe\x00"), encoding="utf-8")
+    )
+    with pytest.raises(ValueError, match="cannot read standard input: not UTF-8 text"):
+        read_source("stdin")
+
+
+def test_an_unreadable_stdin_names_the_source(monkeypatch):
+    class Unreadable:
+        def read(self):
+            raise OSError(errno.EBADF, os.strerror(errno.EBADF))
+
+    monkeypatch.setattr(sys, "stdin", Unreadable())
+    with pytest.raises(ValueError, match="cannot read standard input: Bad file"):
+        read_source("stdin")
+
+
+def _failing_write(written: bytes, error: int):
+    """A _write_fd that lands part of the text, then fails as ENOSPC would."""
+
+    def failing(fd: int, text: str, *, closefd: bool) -> None:
+        os.write(fd, written)
+        os.close(fd)
+        raise OSError(error, os.strerror(error))
+
+    return failing
+
+
+def test_a_failed_file_sink_write_leaves_no_partial_key_file(tmp_path, monkeypatch):
+    """A part-written mnemonic looks like a whole one, and the caller would
+    find out only on restoring from it."""
+    path = tmp_path / "keys.txt"
+    monkeypatch.setattr(
+        secretio, "_write_fd", _failing_write(b"word word ", errno.ENOSPC)
+    )
+    with pytest.raises(ValueError, match=str(path)):
+        write_sink(f"file:{path}", "result")
+    assert not path.exists()
+
+
+def test_a_failed_write_to_an_existing_pipe_leaves_the_pipe(tmp_path, monkeypatch):
+    """Only a file this call created is ours to remove."""
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    reader = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+    monkeypatch.setattr(secretio, "_write_fd", _failing_write(b"", errno.EPIPE))
+    try:
+        with pytest.raises(ValueError, match=str(fifo)):
+            write_sink(f"file:{fifo}", "result")
+    finally:
+        os.close(reader)
+    assert stat.S_ISFIFO(os.stat(fifo).st_mode)
+
+
+def test_a_broken_stdout_is_reported_rather_than_reported_as_success(monkeypatch):
+    """The other two sinks fail loudly; stdout buffered the failure until
+    after main had already returned zero."""
+
+    class BrokenStdout(io.StringIO):
+        def flush(self):
+            raise BrokenPipeError(errno.EPIPE, "Broken pipe")
+
+    monkeypatch.setattr(sys, "stdout", BrokenStdout())
+    with pytest.raises(ValueError, match="cannot write standard output: Broken pipe"):
+        write_sink("stdout", "result")
