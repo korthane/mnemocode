@@ -56,7 +56,7 @@
 
 - [x] 5.1 Add `--input` and `--output` to both subcommands and make the
       positional optional, and verify existing tests still pass, since they
-      exercise the default path — apart from the three age and bech32 message
+      exercise the default path — apart from the age and bech32 message
       expectations the diagnostic redaction in 6.1 rewrites.
 - [x] 5.2 Reject a positional and `--input` given together, checked in the
       handler so the message uses the existing `mnemocode: error: …` form, and

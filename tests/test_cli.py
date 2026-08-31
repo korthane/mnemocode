@@ -453,7 +453,7 @@ def _key_fragments():
     standing, which a whole-string `IDENTITY not in err` check would miss.
     """
     data = IDENTITY.split("1", 1)[1]
-    return [data[i : i + 12] for i in range(len(data) - 12)]
+    return [data[i : i + 12] for i in range(len(data) - 11)]
 
 
 # The four redactions are a denylist over argparse's own message text, so the
@@ -708,6 +708,24 @@ def test_decode_prompts_when_no_mnemonic_is_given(prompt_terminal, capsys):
     assert capsys.readouterr().out == "00" * 16 + "\n"
 
 
+def test_abandoning_the_prompt_is_an_exit_code_not_a_traceback(
+    prompt_terminal, monkeypatch, capsys
+):
+    """Ctrl-C is the ordinary way to leave a prompt, and this branch adds the
+    tool's first one; main catches only ValueError, so the interrupt would
+    otherwise reach the user as a traceback."""
+
+    def interrupted_read(fd):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(secretio, "_read_line", interrupted_read)
+    # A responder still drains the prompt: the TCSAFLUSH restore in the finally
+    # blocks until that output has gone.
+    prompt_terminal.answer("unread")
+    assert main(["encode"]) == 130
+    assert capsys.readouterr().out == ""
+
+
 def test_prompting_without_a_terminal_exits_two(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(secretio, "_TTY_PATH", str(tmp_path / "no-such-tty"))
     assert main(["encode"]) == 2
@@ -941,13 +959,13 @@ def test_a_piped_key_is_ignored_without_input():
 
 
 @pytest.mark.parametrize(
-    "argv",
+    ("argv", "expected"),
     [
-        ["encode", "--output", "bogus:path"],
-        ["decode", "--output", "fd:not-a-number"],
+        (["encode", "--output", "bogus:path"], "unknown output sink"),
+        (["decode", "--output", "fd:not-a-number"], "needs a descriptor number"),
     ],
 )
-def test_a_bad_sink_is_reported_before_the_secret_is_asked_for(argv, capsys):
+def test_a_bad_sink_is_reported_before_the_secret_is_asked_for(argv, expected, capsys):
     """Otherwise a typo in --output costs a blind entry at the prompt first.
     With no terminal attached the prompt is what fails, so the message names
     which of the two ran.
@@ -955,7 +973,7 @@ def test_a_bad_sink_is_reported_before_the_secret_is_asked_for(argv, capsys):
     assert main(argv) == 2
     err = capsys.readouterr().err
     assert "no terminal is available" not in err
-    assert "output sink" in err or "descriptor number" in err
+    assert expected in err
 
 
 @pytest.mark.parametrize(

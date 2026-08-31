@@ -111,7 +111,9 @@ def add_io_options(parser: argparse.ArgumentParser, *, what: str) -> None:
         dest="input_source",
         metavar="SOURCE",
         help=f"where to read the {what} from: pass:VALUE, env:VAR, file:PATH, "
-        "fd:N or stdin; with neither this nor the argument, you are prompted",
+        "fd:N or stdin; pass: is as visible as the argument and env: is "
+        "inherited by every child, so neither is private. With neither this "
+        "nor the argument, you are prompted",
     )
     parser.add_argument(
         "--output",
@@ -207,7 +209,8 @@ def build_parser() -> argparse.ArgumentParser:
         "key",
         nargs="?",
         help="the key to encode, in the --format encoding; hex is "
-        "128 to 256 bits (32 to 64 hex chars)",
+        "128 to 256 bits (32 to 64 hex chars). Visible to other processes "
+        "and kept in shell history — prefer --input",
     )
     encode.set_defaults(run=run_encode)
 
@@ -220,7 +223,8 @@ def build_parser() -> argparse.ArgumentParser:
         "words",
         nargs="*",
         metavar="WORD",
-        help="the mnemonic, as separate words or one quoted phrase",
+        help="the mnemonic, as separate words or one quoted phrase. Visible "
+        "to other processes and kept in shell history — prefer --input",
     )
     decode.set_defaults(run=run_decode)
 
@@ -234,6 +238,11 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"mnemocode: error: {exc}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        # Abandoning the prompt is the ordinary way to leave it; 130 is the
+        # shell's own encoding of a run ended by SIGINT.
+        print(file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

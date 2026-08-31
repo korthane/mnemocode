@@ -16,7 +16,8 @@ $ mnemocode decode --input file:phrase.txt
 ```
 
 With neither `--input` nor an argument, the key or phrase is read from the
-terminal without echoing:
+terminal without echoing. The prompt is written to the terminal, not to
+standard output, so a redirected or piped result holds the result alone:
 
 ```
 $ mnemocode encode
@@ -37,11 +38,10 @@ far as the first one. Use `--input file:` for a wrapped phrase.
 
 Errors name a bad word or character by its position rather than quoting it,
 counting from the start of the key itself, with surrounding whitespace
-trimmed. No message echoes the
-key or the phrase, so the diagnostics are safe to paste into a bug report. The
-one thing a message does repeat is the source you named — a path, a descriptor
-number, a variable name — so `--input env:` given the key itself in place of a
-variable name will show it.
+trimmed. No message echoes the key or the phrase, so the diagnostics are safe
+to paste into a bug report. The one thing a message does repeat is the source
+you named — a path, a descriptor number, a variable name — so `--input env:`
+given the key itself in place of a variable name will show it.
 
 ## Where the key comes from
 
@@ -63,9 +63,9 @@ instead, using the same grammar as OpenSSL's `-passin`:
 `pass:` and a bare key argument are the same leaky channel; both are kept for
 compatibility and for scripts where it does not matter. Because they are the
 same channel, giving both a bare argument and `--input` is an error — exit 2,
-not a rule about which one wins. `env:` is better than
-either — on Linux `/proc/PID/environ` is readable only by its owner — but the
-variable is still inherited by every child process.
+not a rule about which one wins. `env:` is better than either — on Linux
+`/proc/PID/environ` is readable only by its owner — but the variable is still
+inherited by every child process.
 
 Because `file:` accepts a device or a named pipe, a process substitution needs
 no extra syntax:
@@ -90,6 +90,10 @@ so an `age-keygen` key file can be named directly. Exactly one key must remain
 after that: a `keys.txt` holding several identities is an error rather than a
 silent pick, since encoding the wrong one produces a wrong answer that looks
 like a right one.
+
+A source holds the key as text in the `--format` encoding, not as raw bytes:
+`--input file:key.bin` pointed at 32 binary bytes is rejected as not UTF-8
+rather than encoded.
 
 ## Where the result goes
 

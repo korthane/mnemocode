@@ -223,7 +223,9 @@ def test_file_sink_writes_to_a_named_pipe(tmp_path):
         with open(fifo, encoding="utf-8") as stream:
             received.append(stream.read())
 
-    reader = threading.Thread(target=read_pipe)
+    # daemon so a regression that never writes leaves a failed test rather
+    # than a reader blocked in open() that hangs the whole run at shutdown.
+    reader = threading.Thread(target=read_pipe, daemon=True)
     reader.start()
     write_sink(f"file:{fifo}", "result")
     reader.join(timeout=5)
@@ -491,7 +493,9 @@ def test_file_source_reads_a_named_pipe(tmp_path):
     /dev/stdin work; every other file: test uses a regular file."""
     fifo = tmp_path / "pipe"
     os.mkfifo(fifo)
-    writer = threading.Thread(target=lambda: pathlib.Path(fifo).write_text(f"{KEY}\n"))
+    writer = threading.Thread(
+        target=lambda: pathlib.Path(fifo).write_text(f"{KEY}\n"), daemon=True
+    )
     writer.start()
     try:
         assert read_source(f"file:{fifo}") == f"{KEY}\n"
@@ -511,12 +515,25 @@ def test_check_sink_rejects_a_bad_form_before_the_secret_is_read():
 
 def test_check_sink_accepts_the_three_forms_without_opening_anything(tmp_path):
     """A file: FIFO must not be opened here: the open blocks until a reader
-    arrives, which would hang ahead of the prompt this precedes."""
+    arrives, which would hang ahead of the prompt this precedes.
+
+    Run off the main thread so that a regression which does open it fails this
+    test on the join instead of blocking the run with nothing to report.
+    """
     fifo = tmp_path / "pipe"
     os.mkfifo(fifo)
-    check_sink("stdout")
-    check_sink("fd:1")
-    check_sink(f"file:{fifo}")
+
+    def check_all() -> None:
+        check_sink("stdout")
+        check_sink("fd:1")
+        check_sink(f"file:{fifo}")
+        checked.append(True)
+
+    checked: list[bool] = []
+    thread = threading.Thread(target=check_all, daemon=True)
+    thread.start()
+    thread.join(timeout=5)
+    assert checked == [True]
 
 
 def test_a_terminal_that_fails_mid_prompt_is_an_error_not_a_traceback(
@@ -536,3 +553,78 @@ def test_a_terminal_that_fails_mid_prompt_is_an_error_not_a_traceback(
     prompt_terminal.answer("unread")
     with pytest.raises(ValueError, match="cannot read the key from"):
         prompt_secret("key")
+
+
+def test_a_terminal_that_fails_at_the_echo_off_is_an_error_not_a_traceback(
+    prompt_terminal, monkeypatch
+):
+    """termios.error is not an OSError and carries no strerror, so the guard
+    around the read has to name it too; tcsetattr is the call that raises it
+    on a terminal that hung up between the open and the prompt.
+    """
+    real_tcsetattr = termios.tcsetattr
+    calls: list[int] = []
+
+    def failing_tcsetattr(fd, when, attributes):
+        calls.append(fd)
+        # Only the echo-off; the restore in the finally must still run.
+        if len(calls) == 1:
+            raise termios.error(errno.EIO, "Input/output error")
+        return real_tcsetattr(fd, when, attributes)
+
+    monkeypatch.setattr(termios, "tcsetattr", failing_tcsetattr)
+    with pytest.raises(ValueError, match="cannot read the key from"):
+        prompt_secret("key")
+
+
+def test_a_restore_that_fails_leaves_the_read_error_standing(
+    prompt_terminal, monkeypatch
+):
+    """The read error is the one worth reporting, so the finally suppresses a
+    restore failure on the same dead terminal rather than replacing it."""
+    real_tcsetattr = termios.tcsetattr
+    calls: list[int] = []
+
+    def failing_restore(fd, when, attributes):
+        calls.append(fd)
+        if len(calls) == 2:
+            raise termios.error(errno.EIO, "Input/output error")
+        return real_tcsetattr(fd, when, attributes)
+
+    def failing_read(fd):
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(termios, "tcsetattr", failing_restore)
+    monkeypatch.setattr(secretio, "_read_line", failing_read)
+    prompt_terminal.answer("unread")
+    with pytest.raises(ValueError, match="cannot read the key from"):
+        prompt_secret("key")
+
+
+def test_write_sink_rejects_an_unknown_form():
+    """The CLI now checks the form ahead of the prompt, so this guard is
+    reachable only through a direct call — and must still hold."""
+    with pytest.raises(ValueError, match="unknown output sink"):
+        write_sink("bogus:path", "result")
+
+
+def test_the_broken_pipe_salvage_leaves_no_descriptor_open(monkeypatch):
+    """The salvage opens /dev/null to redirect the doomed retry; leaving it
+    open would leak a descriptor on every broken-pipe run."""
+
+    class BrokenStream(io.StringIO):
+        def flush(self):
+            raise OSError(errno.EPIPE, "Broken pipe")
+
+        def fileno(self):
+            return devnull_probe
+
+    devnull_probe = os.open(os.devnull, os.O_WRONLY)
+    try:
+        before = len(os.listdir("/dev/fd"))
+        monkeypatch.setattr(sys, "stdout", BrokenStream())
+        with pytest.raises(ValueError, match="cannot write standard output"):
+            write_sink("stdout", "result")
+        assert len(os.listdir("/dev/fd")) == before
+    finally:
+        os.close(devnull_probe)

@@ -49,8 +49,10 @@ they remain true unchanged on that default path. Two sentences of its prose
 name "the command line" and "standard output" as the only channels; this change
 rewords them to name the source and the sink, which adds and removes no
 behaviour and so needs no delta. Its "Diagnostics never echo key
-material" requirement is already written to hold on every exit path, so it
-governs the new sources without rewording.
+material" requirement already holds on every exit path, so it governs the new
+sources unchanged in substance; its text gains "or character" and fixes the
+counting origin at the start of the key or mnemonic, recording what the age and
+Bech32 messages already had to stop doing rather than adding a rule.
 
 ## Impact
 

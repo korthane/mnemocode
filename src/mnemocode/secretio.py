@@ -143,6 +143,9 @@ SINK_FORMS = ("file:", "fd:", "stdout")
 def check_sink(sink: str) -> None:
     """Reject a malformed sink before the secret is read.
 
+    The single grammar for a sink: `write_sink` defers to it too, so the two
+    cannot come to disagree about which forms exist.
+
     Only the form is checked, never opened: opening a `file:` FIFO blocks until
     a reader arrives, which would hang before the prompt this runs ahead of.
 
@@ -208,6 +211,9 @@ def write_sink(sink: str, text: str) -> None:
         ValueError: on an unknown form, an unwritable sink, or an existing
             regular file. The message names the sink but never the text.
     """
+    # One grammar for both entry points: the branches below cover exactly the
+    # forms check_sink admits, so a form accepted here cannot fall through.
+    check_sink(sink)
     if sink == "stdout":
         stream = sys.stdout
         # CPython leaves sys.stdout None when fd 1 is closed; print would then
@@ -244,21 +250,18 @@ def write_sink(sink: str, text: str) -> None:
                 f"cannot write file descriptor {fd}: {exc.strerror}"
             ) from None
         return
-    if sink.startswith("file:"):
-        path = sink.removeprefix("file:")
-        fd, created = _open_file_sink(path)
-        try:
-            _write_fd(fd, text, closefd=True)
-        except OSError as exc:
-            # A part-written key file looks like a whole one, and the caller
-            # would find out only on restoring from it. Only a file this call
-            # created is ours to remove; a pre-existing pipe or device is not.
-            if created:
-                with contextlib.suppress(OSError):
-                    os.unlink(path)
-            raise ValueError(f"cannot write {path}: {exc.strerror}") from None
-        return
-    raise ValueError(f"unknown output sink; use one of {', '.join(SINK_FORMS)}")
+    path = sink.removeprefix("file:")
+    fd, created = _open_file_sink(path)
+    try:
+        _write_fd(fd, text, closefd=True)
+    except OSError as exc:
+        # A part-written key file looks like a whole one, and the caller
+        # would find out only on restoring from it. Only a file this call
+        # created is ours to remove; a pre-existing pipe or device is not.
+        if created:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+        raise ValueError(f"cannot write {path}: {exc.strerror}") from None
 
 
 # Overridden in tests to point the prompt at a pty pair. Opening the terminal
@@ -316,15 +319,21 @@ def prompt_secret(label: str) -> str:
     except termios.error:
         os.close(fd)
         raise ValueError(f"{_TTY_PATH} is not a terminal; use --input") from None
-    silenced = termios.tcgetattr(fd)
+    # Copy rather than a second tcgetattr, which would be a syscall outside
+    # the guard above. Only the lflag int is replaced, so sharing cc is safe.
+    silenced = list(restore)
     silenced[3] &= ~termios.ECHO
     try:
         termios.tcsetattr(fd, when, silenced)
         os.write(fd, f"{label}: ".encode())
         entered = _read_line(fd)
-    except OSError as exc:
+    except (OSError, termios.error) as exc:
+        # termios.error is not an OSError and carries no strerror, so the
+        # terminal failing at tcsetattr needs both spellings to stay an
+        # exit 2 rather than a traceback.
+        reason = getattr(exc, "strerror", None) or exc
         raise ValueError(
-            f"cannot read the {label} from {_TTY_PATH}: {exc.strerror}"
+            f"cannot read the {label} from {_TTY_PATH}: {reason}"
         ) from None
     finally:
         # A terminal that failed mid-prompt fails here too, and the read error
