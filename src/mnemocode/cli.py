@@ -8,6 +8,13 @@ from typing import NoReturn
 from . import __version__
 from .agekey import format_age_secret_key, parse_age_secret_key
 from .bip39 import VALID_ENTROPY_BYTES, entropy_to_mnemonic, mnemonic_to_entropy
+from .secretio import (
+    one_secret,
+    prompt_secret,
+    read_source,
+    secret_words,
+    write_sink,
+)
 
 AGE_WORD_COUNT = 24
 
@@ -40,24 +47,69 @@ KEY_FORMATTERS = {"hex": bytes.hex, "age": format_age_secret_key}
 FORMATS = tuple(KEY_PARSERS)
 
 
+def reject_double_input(given: object, source: str | None, label: str) -> None:
+    """Refuse a secret supplied twice.
+
+    Checked here rather than with a mutually exclusive argparse group: such a
+    group accepts a positional only when its nargs permits zero, and the
+    message it generates for that case reads poorly. Raising keeps the wording
+    consistent with every other key error.
+    """
+    if given and source is not None:
+        raise ValueError(f"give the {label} as an argument or with --input, not both")
+
+
 def run_encode(args: argparse.Namespace) -> int:
+    reject_double_input(args.key, args.input_source, "key")
+    if args.input_source is not None:
+        text = one_secret(read_source(args.input_source))
+    elif args.key is not None:
+        # A positional argument keeps its existing handling: the stream rules
+        # describe a source, and applying them here would reword its errors.
+        text = args.key
+    else:
+        text = one_secret(prompt_secret("key"))
     # Parsed here rather than in an argparse type= hook, which argparse applies
     # while parsing, before --format is known.
-    key = KEY_PARSERS[args.format](args.key)
-    print(" ".join(entropy_to_mnemonic(key)))
+    key = KEY_PARSERS[args.format](text)
+    write_sink(args.output_sink, " ".join(entropy_to_mnemonic(key)))
     return 0
 
 
 def run_decode(args: argparse.Namespace) -> int:
-    # Re-split so a single quoted phrase and separate word arguments both work.
-    words = " ".join(args.words).split()
+    reject_double_input(args.words, args.input_source, "mnemonic")
+    if args.input_source is not None:
+        words = secret_words(read_source(args.input_source))
+    elif args.words:
+        # Re-split so a single quoted phrase and separate word arguments both work.
+        words = " ".join(args.words).split()
+    else:
+        words = secret_words(prompt_secret("mnemonic"))
     if args.format == "age" and len(words) != AGE_WORD_COUNT:
         raise ValueError(
             f"an age key is always {AGE_WORD_COUNT} words; this mnemonic has "
             f"{len(words)}"
         )
-    print(KEY_FORMATTERS[args.format](mnemonic_to_entropy(words)))
+    write_sink(args.output_sink, KEY_FORMATTERS[args.format](mnemonic_to_entropy(words)))
     return 0
+
+
+def add_io_options(parser: argparse.ArgumentParser, *, what: str) -> None:
+    parser.add_argument(
+        "--input",
+        dest="input_source",
+        metavar="SOURCE",
+        help=f"where to read the {what} from: pass:VALUE, env:VAR, file:PATH, "
+        "fd:N or stdin; with neither this nor the argument, you are prompted",
+    )
+    parser.add_argument(
+        "--output",
+        dest="output_sink",
+        metavar="SINK",
+        default="stdout",
+        help="where to write the result: file:PATH (created private, and never "
+        "overwriting an existing file), fd:N, or stdout (the default)",
+    )
 
 
 def add_format_option(parser: argparse.ArgumentParser) -> None:
@@ -139,8 +191,10 @@ def build_parser() -> argparse.ArgumentParser:
         "encode", help="encode a key into a mnemonic phrase"
     )
     add_format_option(encode)
+    add_io_options(encode, what="key")
     encode.add_argument(
         "key",
+        nargs="?",
         help="the key to encode, in the --format encoding; hex is "
         "128 to 256 bits (32 to 64 hex chars)",
     )
@@ -150,9 +204,10 @@ def build_parser() -> argparse.ArgumentParser:
         "decode", help="recover the key from a mnemonic phrase"
     )
     add_format_option(decode)
+    add_io_options(decode, what="mnemonic")
     decode.add_argument(
         "words",
-        nargs="+",
+        nargs="*",
         metavar="WORD",
         help="the mnemonic, as separate words or one quoted phrase",
     )
