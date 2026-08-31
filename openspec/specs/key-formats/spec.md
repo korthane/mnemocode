@@ -13,8 +13,8 @@ The `encode` and `decode` subcommands SHALL each accept a `--format` option
 choosing the text encoding of the key. The supported values SHALL be `hex` and
 `age`, and the default SHALL be `hex`.
 
-On `encode`, `--format` describes the key given on the command line. On
-`decode`, it describes the key printed to standard output. A mnemonic carries no
+On `encode`, `--format` describes the key however it is supplied. On `decode`,
+it describes the key written to the selected sink. A mnemonic carries no
 record of the format it was produced from, so `decode` SHALL NOT infer one.
 
 #### Scenario: Format defaults to hex
@@ -142,9 +142,11 @@ diagnostic to standard error, leaving standard output empty.
 
 A diagnostic is the one part of a failed run a user is likely to paste into a
 bug report, so no message the tool writes to standard error SHALL contain the
-key, the mnemonic, or any word of one. A rejected word SHALL be identified by
-its 1-based position instead. This holds on every exit path, including the
-errors the argument parser emits before a subcommand handler runs.
+key, the mnemonic, or any word of one. A rejected word or character SHALL be
+identified by its 1-based position instead, counted from the start of the key
+or mnemonic, so that every position a run reports shares one origin. This holds
+on every exit path, including the errors the argument parser emits before a
+subcommand handler runs.
 
 #### Scenario: A rejected word is named by its position
 

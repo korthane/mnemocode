@@ -24,9 +24,11 @@ def parse_age_secret_key(text: str) -> bytes:
     """
     hrp, key = bech32_decode(text.strip())
     if hrp != AGE_SECRET_KEY_HRP:
+        # The prefix we wanted is a constant, but the one we got came from
+        # the input, so it is not quoted back.
         raise ValueError(
             f"not an age secret key: expected the {AGE_SECRET_KEY_HRP!r} prefix, "
-            f"got {hrp!r}"
+            "got a different one"
         )
     if len(key) != AGE_SECRET_KEY_BYTES:
         raise ValueError(
