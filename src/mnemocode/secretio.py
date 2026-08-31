@@ -252,16 +252,21 @@ def write_sink(sink: str, text: str) -> None:
         return
     path = sink.removeprefix("file:")
     fd, created = _open_file_sink(path)
+    written = False
     try:
         _write_fd(fd, text, closefd=True)
+        written = True
     except OSError as exc:
-        # A part-written key file looks like a whole one, and the caller
-        # would find out only on restoring from it. Only a file this call
-        # created is ours to remove; a pre-existing pipe or device is not.
-        if created:
+        raise ValueError(f"cannot write {path}: {exc.strerror}") from None
+    finally:
+        # A part-written key file looks like a whole one, and the caller would
+        # find out only on restoring from it. Cleaning up in the finally covers
+        # Ctrl-C mid-write too, which leaves the same half file. Only a file
+        # this call created is ours to remove; a pre-existing pipe or device
+        # is not.
+        if not written and created:
             with contextlib.suppress(OSError):
                 os.unlink(path)
-        raise ValueError(f"cannot write {path}: {exc.strerror}") from None
 
 
 # Overridden in tests to point the prompt at a pty pair. Opening the terminal

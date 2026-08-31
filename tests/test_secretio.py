@@ -232,6 +232,23 @@ def test_file_sink_writes_to_a_named_pipe(tmp_path):
     assert received == ["result\n"]
 
 
+def test_file_sink_removes_a_part_written_file_when_the_write_is_abandoned(
+    tmp_path, monkeypatch
+):
+    """Ctrl-C mid-write leaves the same half file an I/O error would, and a
+    half key file looks whole until the day it is restored from."""
+    path = tmp_path / "key.txt"
+
+    def interrupted_write(fd, text, closefd):
+        os.close(fd)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(secretio, "_write_fd", interrupted_write)
+    with pytest.raises(KeyboardInterrupt):
+        write_sink(f"file:{path}", "result")
+    assert not path.exists()
+
+
 def test_file_sink_writes_to_a_character_device():
     # /dev/null is a character device on every platform this runs on, so it
     # exercises the S_ISCHR branch without depending on how stdout is attached.
@@ -260,10 +277,36 @@ def test_prompt_does_not_echo_the_typed_secret(prompt_terminal):
 def test_prompt_restores_the_terminal_echo_setting(prompt_terminal):
     watcher = os.open(secretio._TTY_PATH, os.O_RDWR | os.O_NOCTTY)
     try:
-        before = termios.tcgetattr(watcher)[3]
+        # The whole attribute list, not just lflag: prompt_secret shallow-copies
+        # what it saves, so the copy shares the cc sublist with the original.
+        before = termios.tcgetattr(watcher)
         prompt_terminal.answer(KEY)
         prompt_secret("key")
-        assert termios.tcgetattr(watcher)[3] == before
+        assert termios.tcgetattr(watcher) == before
+    finally:
+        os.close(watcher)
+
+
+def test_prompt_restores_the_terminal_when_the_entry_is_abandoned(
+    prompt_terminal, monkeypatch
+):
+    """Ctrl-C is the ordinary way to leave a prompt, and it does not pass
+    through the except clause. A restore that moved off the finally would
+    hand the shell back with echo off, needing stty sane to type again."""
+    watcher = os.open(secretio._TTY_PATH, os.O_RDWR | os.O_NOCTTY)
+
+    def interrupted_read(fd):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(secretio, "_read_line", interrupted_read)
+    # A responder still drains the prompt: the TCSAFLUSH restore in the finally
+    # blocks until that output has gone.
+    prompt_terminal.answer("unread")
+    try:
+        before = termios.tcgetattr(watcher)
+        with pytest.raises(KeyboardInterrupt):
+            prompt_secret("key")
+        assert termios.tcgetattr(watcher) == before
     finally:
         os.close(watcher)
 
@@ -513,27 +556,21 @@ def test_check_sink_rejects_a_bad_form_before_the_secret_is_read():
         check_sink("fd:not-a-number")
 
 
-def test_check_sink_accepts_the_three_forms_without_opening_anything(tmp_path):
+def test_check_sink_accepts_the_three_forms_without_opening_anything(
+    tmp_path, monkeypatch
+):
     """A file: FIFO must not be opened here: the open blocks until a reader
-    arrives, which would hang ahead of the prompt this precedes.
-
-    Run off the main thread so that a regression which does open it fails this
-    test on the join instead of blocking the run with nothing to report.
+    arrives, which would hang ahead of the prompt this precedes. Refusing the
+    open outright names the regression instead of leaving it as a timeout.
     """
-    fifo = tmp_path / "pipe"
-    os.mkfifo(fifo)
 
-    def check_all() -> None:
-        check_sink("stdout")
-        check_sink("fd:1")
-        check_sink(f"file:{fifo}")
-        checked.append(True)
+    def refuse(*args, **kwargs):
+        pytest.fail("check_sink opened a path")
 
-    checked: list[bool] = []
-    thread = threading.Thread(target=check_all, daemon=True)
-    thread.start()
-    thread.join(timeout=5)
-    assert checked == [True]
+    monkeypatch.setattr(os, "open", refuse)
+    check_sink("stdout")
+    check_sink("fd:1")
+    check_sink(f"file:{tmp_path / 'pipe'}")
 
 
 def test_a_terminal_that_fails_mid_prompt_is_an_error_not_a_traceback(
@@ -551,7 +588,7 @@ def test_a_terminal_that_fails_mid_prompt_is_an_error_not_a_traceback(
     # A responder is still needed: it drains the prompt from the pty, and the
     # TCSAFLUSH restore in the finally blocks until that output has gone.
     prompt_terminal.answer("unread")
-    with pytest.raises(ValueError, match="cannot read the key from"):
+    with pytest.raises(ValueError, match="cannot read the key from .*Input/output error"):
         prompt_secret("key")
 
 
@@ -573,8 +610,9 @@ def test_a_terminal_that_fails_at_the_echo_off_is_an_error_not_a_traceback(
         return real_tcsetattr(fd, when, attributes)
 
     monkeypatch.setattr(termios, "tcsetattr", failing_tcsetattr)
-    with pytest.raises(ValueError, match="cannot read the key from"):
+    with pytest.raises(ValueError, match="cannot read the key from .*Input/output error"):
         prompt_secret("key")
+    assert len(calls) == 2
 
 
 def test_a_restore_that_fails_leaves_the_read_error_standing(
@@ -597,7 +635,7 @@ def test_a_restore_that_fails_leaves_the_read_error_standing(
     monkeypatch.setattr(termios, "tcsetattr", failing_restore)
     monkeypatch.setattr(secretio, "_read_line", failing_read)
     prompt_terminal.answer("unread")
-    with pytest.raises(ValueError, match="cannot read the key from"):
+    with pytest.raises(ValueError, match="cannot read the key from .*Input/output error"):
         prompt_secret("key")
 
 

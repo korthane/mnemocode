@@ -17,13 +17,16 @@ $ mnemocode decode --input file:phrase.txt
 
 With neither `--input` nor an argument, the key or phrase is read from the
 terminal without echoing. The prompt is written to the terminal, not to
-standard output, so a redirected or piped result holds the result alone:
+standard output, so a redirected or piped stream holds the result alone:
 
 ```
 $ mnemocode encode
 key:
 army van defense carry jealous true garbage claim echo media make crunch
 ```
+
+Ctrl-C abandons the prompt: nothing is written and the run exits 130, the
+status a shell reports for a command ended by SIGINT.
 
 `decode` verifies the BIP-39 checksum and exits non-zero on a mismatch, so a
 mistyped word is reported rather than silently decoded to the wrong key. It
@@ -37,7 +40,7 @@ there Enter submits, so a phrase pasted with its line breaks is read only as
 far as the first one. Use `--input file:` for a wrapped phrase.
 
 Errors name a bad word or character by its position rather than quoting it,
-counting from the start of the key itself, with surrounding whitespace
+counting from the start of the key or the mnemonic itself, with whitespace
 trimmed. No message echoes the key or the phrase, so the diagnostics are safe
 to paste into a bug report. The one thing a message does repeat is the source
 you named — a path, a descriptor number, a variable name — so `--input env:`

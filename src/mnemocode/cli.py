@@ -231,17 +231,30 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def report(message: str = "") -> None:
+    """Write a diagnostic to standard error, or to nowhere at all.
+
+    CPython leaves `sys.stderr` None when fd 2 was closed at startup, and
+    `print(file=None)` falls back to standard output — putting a diagnostic
+    on the stream the result was redirected from. Dropping the message is the
+    lesser harm: the exit status still reports the failure.
+    """
+    if sys.stderr is None:
+        return
+    print(message, file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.run(args)
     except ValueError as exc:
-        print(f"mnemocode: error: {exc}", file=sys.stderr)
+        report(f"mnemocode: error: {exc}")
         return 2
     except KeyboardInterrupt:
         # Abandoning the prompt is the ordinary way to leave it; 130 is the
         # shell's own encoding of a run ended by SIGINT.
-        print(file=sys.stderr)
+        report()
         return 130
 
 

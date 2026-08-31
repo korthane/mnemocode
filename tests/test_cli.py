@@ -723,7 +723,11 @@ def test_abandoning_the_prompt_is_an_exit_code_not_a_traceback(
     # blocks until that output has gone.
     prompt_terminal.answer("unread")
     assert main(["encode"]) == 130
-    assert capsys.readouterr().out == ""
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    # The newline moves the cursor off the prompt line, and is the whole of it:
+    # a traceback would land on this same stream.
+    assert captured.err == "\n"
 
 
 def test_prompting_without_a_terminal_exits_two(monkeypatch, tmp_path, capsys):
@@ -935,6 +939,27 @@ def test_every_input_source_yields_the_same_key_for_decode(
 
     monkeypatch.setattr(sys, "stdin", io.StringIO(ZEROS_12))
     assert out(["decode", "--input", "stdin"]) == baseline
+
+
+def test_a_diagnostic_never_lands_on_standard_output(tmp_path):
+    """CPython leaves sys.stderr None when fd 2 was closed at startup, and
+    print(file=None) then falls back to standard output — putting the
+    diagnostic on the very stream a redirect or a pipe collects.
+
+    The relay closes fd 2 and execs, so the tool starts with it already gone;
+    closing it from inside would leave sys.stderr bound to a dead descriptor
+    instead, which is a different case.
+    """
+    missing = tmp_path / "nope.txt"
+    relay = (
+        "import os, sys; os.close(2); os.execv(sys.executable, [sys.executable,"
+        f" '-m', 'mnemocode', 'encode', '--input', 'file:{missing}'])"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", relay], capture_output=True, text=True, timeout=30
+    )
+    assert result.returncode == 2
+    assert result.stdout == ""
 
 
 def test_a_piped_key_is_ignored_without_input():

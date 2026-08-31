@@ -18,6 +18,9 @@ def no_controlling_terminal(monkeypatch, tmp_path_factory):
     pty of their own.
     """
     absent = tmp_path_factory.getbasetemp() / "absent-terminal"
+    # One path for the whole session, so a test that creates it would flip
+    # every later test from "no terminal" to "not a terminal".
+    assert not absent.exists()
     monkeypatch.setattr(secretio, "_TTY_PATH", str(absent))
 
 
@@ -101,15 +104,10 @@ def prompt_terminal(monkeypatch):
         for thread in terminal.threads:
             thread.join(timeout=15)
         stuck = [thread for thread in terminal.threads if thread.is_alive()]
-        try:
-            # Fail loudly rather than closing the master out from under a
-            # writer, which is the hazard the join exists to avoid.
-            assert not stuck
-        finally:
-            # Closing regardless: an assertion that skipped these would leak a
-            # pty pair into every later test in the session.
-            # Master first: closing the slave while the master is still open
-            # leaves macOS waiting on the line discipline for about half a
-            # second.
-            os.close(master)
-            os.close(slave)
+        # Master first: closing the slave while the master is still open leaves
+        # macOS waiting on the line discipline for about half a second.
+        os.close(master)
+        os.close(slave)
+        # Asserted after the closes: a stuck responder is worth failing over,
+        # but skipping them would leak a pty pair into every later test.
+        assert not stuck

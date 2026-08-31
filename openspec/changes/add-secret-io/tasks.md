@@ -51,6 +51,9 @@
       prompt text.
 - [x] 4.3 Exit 2 with a message when no controlling terminal is available rather
       than blocking, and verify a test with the terminal closed fails fast.
+- [x] 4.4 Leave an abandoned prompt as an exit status rather than a traceback:
+      this change adds the tool's first interruptible wait, so Ctrl-C exits 130
+      with the terminal's echo restored, and verify tests for both.
 
 ## 5. CLI wiring
 
@@ -72,7 +75,10 @@
 
 - [x] 6.1 Ensure source and sink errors name only the path, descriptor number or
       variable name, and verify tests on an unreadable file, a bad descriptor and
-      an unset variable each name the source and contain no secret.
+      an unset variable each name the source and contain no secret. The same
+      applies to the parse errors reached from a source: `parse_age_secret_key`
+      and `bech32_decode` quoted a fragment of the key back, and now report a
+      position instead — verify tests pin that position at two HRP lengths.
 - [x] 6.2 Extend the existing no-leak property test to cover the new source and
       sink shapes that put a key where a name belongs — `env:` and `file:` are
       excluded, since a caller who types the key as a variable or a path has
