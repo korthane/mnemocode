@@ -1,7 +1,9 @@
 """Command-line interface for mnemocode."""
 
 import argparse
+import re
 import sys
+from typing import NoReturn
 
 from . import __version__
 from .agekey import format_age_secret_key, parse_age_secret_key
@@ -70,8 +72,61 @@ def add_format_option(parser: argparse.ArgumentParser) -> None:
     )
 
 
+# argparse quotes the offending argv value into these four messages, and here
+# that value is the key itself: a mistyped subcommand prints the whole
+# identity, an unquoted mnemonic prints all but its first word, `--version=KEY`
+# prints the key as an "ignored explicit argument", and `--=KEY` is an empty
+# abbreviation that matches every long option, so argparse calls it ambiguous
+# and prints the token whole.
+# Greedy and DOTALL on purpose: a lazy match would stop at a " (choose
+# from" embedded in the value itself and leave the rest of it standing, and
+# the two messages that interpolate raw argv carry a pasted newline through.
+# One alternation rather than four passes: argparse always puts the message
+# text before the value, so the leftmost match is the real message, and
+# re.sub never rescans a replacement. A value with another of these messages
+# planted inside it therefore cannot survive by eating the text a second
+# pattern anchors on.
+_ARGV_QUOTED = re.compile(
+    r"(?P<choice>invalid choice: .+ \(choose from)"
+    r"|(?P<ambiguous>ambiguous option: .+ could match )"
+    r"|(?P<unrecognized>unrecognized arguments: .+)"
+    r"|(?P<ignored>ignored explicit argument .+)",
+    re.DOTALL,
+)
+
+_REDACTED = {
+    "choice": "invalid choice (choose from",
+    # The match list argparse appends is registered option names, not input.
+    "ambiguous": "ambiguous option (withheld) could match ",
+    # Conditional, not a rule: decode takes loose words, so "a mnemonic must
+    # be one argument" would be false, and the cause is as often a misspelled
+    # option as an unquoted phrase.
+    "unrecognized": (
+        "unrecognized arguments (withheld); check for a misspelled option, or "
+        "pass a key or mnemonic as a single argument"
+    ),
+    "ignored": "ignored explicit argument",
+}
+
+
+def _redact_argv(message: str) -> str:
+    return _ARGV_QUOTED.sub(lambda m: _REDACTED[m.lastgroup], message)
+
+
+class _RedactingParser(argparse.ArgumentParser):
+    """Parser that keeps key material out of argparse's own diagnostics.
+
+    argparse fails before main() can catch anything, so redaction has to
+    happen here for the no-leak rule to hold on every exit path. The
+    subparsers inherit this class through add_subparsers' parser_class default.
+    """
+
+    def error(self, message: str) -> NoReturn:
+        super().error(_redact_argv(message))
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _RedactingParser(
         prog="mnemocode",
         description="Convert between a key and a BIP-39 mnemonic phrase.",
     )

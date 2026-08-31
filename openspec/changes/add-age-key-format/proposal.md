@@ -39,10 +39,14 @@ error-prone step the tool exists to remove.
 - **Changed**: `src/mnemocode/cli.py`. Key validation moves out of the argparse
   `type=` hook into the subcommand handlers, because argparse applies `type=`
   before `--format` is known. Invalid keys keep exit code 2 but are reported as
-  `mnemocode: error: …` rather than an argparse usage block.
+  `mnemocode: error: …` rather than an argparse usage block. `build_parser()`
+  also returns an `ArgumentParser` subclass that redacts the argv value from
+  argparse's own diagnostics, which are emitted before `main()` can catch
+  anything.
 - **Unchanged**: `wordlist.py`, `english.txt`, and the package's zero-dependency
   install story. `bip39.py` keeps its encoding, gaining only a one-line message
   change: a rejected word is reported by position, never echoed, so no mnemonic
   text reaches stderr.
 - **Docs**: README gains an age/sops section and the key-size table gains a note
-  that an age identity is always 256 bits / 24 words.
+  that an age identity is always 256 bits / 24 words, plus a paragraph on
+  diagnostics never echoing the key or the phrase.
