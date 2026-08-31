@@ -73,6 +73,10 @@ def read_source(source: str) -> str:
             names the source but never its contents.
     """
     if source == "stdin":
+        # CPython leaves sys.stdin None when fd 0 is closed, so this is not an
+        # OSError the branch below could catch.
+        if sys.stdin is None:
+            raise ValueError("cannot read standard input: it is closed")
         try:
             return sys.stdin.read()
         except UnicodeDecodeError:
@@ -136,6 +140,23 @@ def secret_words(text: str) -> list[str]:
 SINK_FORMS = ("file:", "fd:", "stdout")
 
 
+def check_sink(sink: str) -> None:
+    """Reject a malformed sink before the secret is read.
+
+    Only the form is checked, never opened: opening a `file:` FIFO blocks until
+    a reader arrives, which would hang before the prompt this runs ahead of.
+
+    Raises:
+        ValueError: on an unknown form or an unusable fd: number.
+    """
+    if sink == "stdout" or sink.startswith("file:"):
+        return
+    if sink.startswith("fd:"):
+        _descriptor(sink.removeprefix("fd:"), "sink")
+        return
+    raise ValueError(f"unknown output sink; use one of {', '.join(SINK_FORMS)}")
+
+
 def _open_existing_sink(path: str) -> int:
     """Open a path that already exists, refusing anything but a pipe or device.
 
@@ -188,17 +209,28 @@ def write_sink(sink: str, text: str) -> None:
             regular file. The message names the sink but never the text.
     """
     if sink == "stdout":
+        stream = sys.stdout
+        # CPython leaves sys.stdout None when fd 1 is closed; print would then
+        # discard the result and report success.
+        if stream is None:
+            raise ValueError("cannot write standard output: it is closed")
         try:
-            print(text)
+            print(text, file=stream)
             # print only fills the buffer. Without this flush a broken pipe
             # surfaces at interpreter shutdown, long after we reported success.
-            sys.stdout.flush()
+            stream.flush()
         except OSError as exc:
             # The buffer still holds the text and the interpreter would retry
             # it while shutting down; send that retry to /dev/null so the
-            # failure is reported once, here.
+            # failure is reported once, here. The descriptor is resolved first
+            # so a stream with no fileno leaves nothing opened behind.
             with contextlib.suppress(OSError, ValueError):
-                os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+                target = stream.fileno()
+                devnull = os.open(os.devnull, os.O_WRONLY)
+                try:
+                    os.dup2(devnull, target)
+                finally:
+                    os.close(devnull)
             raise ValueError(
                 f"cannot write standard output: {exc.strerror}"
             ) from None
@@ -290,10 +322,17 @@ def prompt_secret(label: str) -> str:
         termios.tcsetattr(fd, when, silenced)
         os.write(fd, f"{label}: ".encode())
         entered = _read_line(fd)
+    except OSError as exc:
+        raise ValueError(
+            f"cannot read the {label} from {_TTY_PATH}: {exc.strerror}"
+        ) from None
     finally:
-        termios.tcsetattr(fd, when, restore)
-        # The newline the user typed was swallowed along with the echo.
-        os.write(fd, b"\n")
+        # A terminal that failed mid-prompt fails here too, and the read error
+        # is the one worth reporting; restoring echo on a dead tty is moot.
+        with contextlib.suppress(OSError, termios.error):
+            termios.tcsetattr(fd, when, restore)
+            # The newline the user typed was swallowed along with the echo.
+            os.write(fd, b"\n")
         os.close(fd)
     secret = entered.strip()
     if not secret:

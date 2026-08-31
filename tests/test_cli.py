@@ -653,6 +653,7 @@ def test_a_positional_and_input_together_are_rejected(capsys):
     assert main(["encode", HEX_KEY, "--input", f"pass:{HEX_KEY}"]) == 2
     captured = capsys.readouterr()
     assert captured.out == ""
+    assert captured.err.startswith("mnemocode: error: ")
     assert "not both" in captured.err
     assert HEX_KEY not in captured.err
 
@@ -805,13 +806,15 @@ def test_dev_stdout_follows_what_standard_output_is_attached_to(tmp_path):
         "file:/dev/stdout",
     ]
 
-    piped = subprocess.run(argv, capture_output=True, text=True)
+    piped = subprocess.run(argv, capture_output=True, text=True, timeout=30)
     assert piped.returncode == 0
     assert len(piped.stdout.split()) == 12
 
     redirected = tmp_path / "out.txt"
     with open(redirected, "w") as handle:
-        to_file = subprocess.run(argv, stdout=handle, stderr=subprocess.PIPE, text=True)
+        to_file = subprocess.run(
+            argv, stdout=handle, stderr=subprocess.PIPE, text=True, timeout=30
+        )
     assert to_file.returncode == 2
     assert "refusing to overwrite" in to_file.stderr
     assert redirected.read_text() == ""
@@ -925,11 +928,34 @@ def test_a_piped_key_is_ignored_without_input():
         input=f"{HEX_KEY}\n",
         capture_output=True,
         text=True,
+        # start_new_session detaches the child from the terminal pytest was
+        # launched from; without it the prompt opens /dev/tty and blocks
+        # forever, stealing the developer's keystrokes.
+        start_new_session=True,
+        timeout=30,
     )
     assert result.returncode == 2
     assert "--input" in result.stderr
     assert result.stdout == ""
     assert HEX_KEY not in result.stderr
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["encode", "--output", "bogus:path"],
+        ["decode", "--output", "fd:not-a-number"],
+    ],
+)
+def test_a_bad_sink_is_reported_before_the_secret_is_asked_for(argv, capsys):
+    """Otherwise a typo in --output costs a blind entry at the prompt first.
+    With no terminal attached the prompt is what fails, so the message names
+    which of the two ran.
+    """
+    assert main(argv) == 2
+    err = capsys.readouterr().err
+    assert "no terminal is available" not in err
+    assert "output sink" in err or "descriptor number" in err
 
 
 @pytest.mark.parametrize(
@@ -955,4 +981,6 @@ def test_a_prompted_mnemonic_starting_with_a_hash_is_not_a_comment(
     it: a bad word must be reported as a word, not as an empty source."""
     prompt_terminal.answer("# not a word")
     assert main(["decode"]) == 2
-    assert "no mnemonic" not in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "no mnemonic" not in err
+    assert "mnemonic has 4 words" in err

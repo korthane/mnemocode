@@ -100,6 +100,9 @@ def prompt_terminal(monkeypatch):
         # descriptor number the OS may have handed to another test's file.
         for thread in terminal.threads:
             thread.join(timeout=15)
+            # Fail loudly rather than closing the master out from under a
+            # writer, which is the hazard the join exists to avoid.
+            assert not thread.is_alive()
         # Master first: closing the slave while the master is still open leaves
         # macOS waiting on the line discipline for about half a second.
         os.close(master)

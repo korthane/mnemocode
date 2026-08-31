@@ -9,6 +9,7 @@ from . import __version__
 from .agekey import format_age_secret_key, parse_age_secret_key
 from .bip39 import VALID_ENTROPY_BYTES, entropy_to_mnemonic, mnemonic_to_entropy
 from .secretio import (
+    check_sink,
     one_secret,
     prompt_secret,
     read_source,
@@ -55,9 +56,10 @@ def reject_double_input(given: bool, source: str | None, label: str) -> None:
     message it generates for that case reads poorly. Raising keeps the wording
     consistent with every other key error.
 
-    Encode passes presence, not truthiness: an empty positional is still one
-    the caller supplied, and `encode ""` alone already reports an empty key.
-    Decode's nargs="*" cannot express that difference, so it passes a bool.
+    Callers pass presence, not truthiness: an empty positional is still one the
+    caller supplied, and `encode ""` alone already reports an empty key. Encode
+    tests against None because nargs="?" defaults to it; decode's nargs="*"
+    gives [] only when the argument is absent, so a bool says the same thing.
     """
     if given and source is not None:
         raise ValueError(f"give the {label} as an argument or with --input, not both")
@@ -65,6 +67,7 @@ def reject_double_input(given: bool, source: str | None, label: str) -> None:
 
 def run_encode(args: argparse.Namespace) -> int:
     reject_double_input(args.key is not None, args.input_source, "key")
+    check_sink(args.output_sink)
     if args.input_source is not None:
         text = one_secret(read_source(args.input_source))
     elif args.key is not None:
@@ -82,6 +85,7 @@ def run_encode(args: argparse.Namespace) -> int:
 
 def run_decode(args: argparse.Namespace) -> int:
     reject_double_input(bool(args.words), args.input_source, "mnemonic")
+    check_sink(args.output_sink)
     if args.input_source is not None:
         words = secret_words(read_source(args.input_source))
     elif args.words:

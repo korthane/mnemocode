@@ -1,7 +1,9 @@
 import errno
 import io
 import os
+import pathlib
 import stat
+import subprocess
 import sys
 import termios
 import threading
@@ -11,6 +13,7 @@ import pytest
 from mnemocode import secretio
 from mnemocode.secretio import (
     SOURCE_FORMS,
+    check_sink,
     one_secret,
     prompt_secret,
     read_source,
@@ -446,3 +449,90 @@ def test_a_broken_stdout_is_reported_rather_than_reported_as_success(monkeypatch
     monkeypatch.setattr(sys, "stdout", BrokenStdout())
     with pytest.raises(ValueError, match="cannot write standard output: Broken pipe"):
         write_sink("stdout", "result")
+
+
+def test_a_closed_stdout_is_an_error_not_an_attribute_error(monkeypatch):
+    """CPython leaves sys.stdout None when fd 1 is closed. print() then
+    discards the mnemonic silently and flush() raises AttributeError."""
+    monkeypatch.setattr(sys, "stdout", None)
+    with pytest.raises(ValueError, match="cannot write standard output: it is closed"):
+        write_sink("stdout", "result")
+
+
+def test_a_closed_stdin_is_an_error_not_an_attribute_error(monkeypatch):
+    """sys.stdin is None, not a stream raising OSError, so the OSError guard
+    beside this one never sees it."""
+    monkeypatch.setattr(sys, "stdin", None)
+    with pytest.raises(ValueError, match="cannot read standard input: it is closed"):
+        read_source("stdin")
+
+
+def test_a_broken_stdout_is_redirected_so_shutdown_does_not_retry_it(tmp_path):
+    """The salvage is unreachable through a StringIO: its fileno() raises
+    io.UnsupportedOperation, which is both OSError and ValueError, so the
+    suppress swallows it and the dup2 never runs. Only a real descriptor
+    reaches it, and only out of process can the shutdown retry be observed.
+    """
+    argv = [sys.executable, "-m", "mnemocode", "encode", "0" * 32]
+    process = subprocess.Popen(
+        argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+    )
+    process.stdout.close()
+    _, err = process.communicate(timeout=30)
+    assert process.returncode == 2
+    assert err.strip() == "mnemocode: error: cannot write standard output: Broken pipe"
+    # Without the dup2 the interpreter retries the buffered mnemonic while
+    # shutting down and prints this after our own message.
+    assert "Exception ignored" not in err
+
+
+def test_file_source_reads_a_named_pipe(tmp_path):
+    """The spec admits a device or a pipe so that a process substitution and
+    /dev/stdin work; every other file: test uses a regular file."""
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    writer = threading.Thread(target=lambda: pathlib.Path(fifo).write_text(f"{KEY}\n"))
+    writer.start()
+    try:
+        assert read_source(f"file:{fifo}") == f"{KEY}\n"
+    finally:
+        writer.join(timeout=15)
+        assert not writer.is_alive()
+
+
+def test_check_sink_rejects_a_bad_form_before_the_secret_is_read():
+    """A typo in --output otherwise costs a blind 24-word entry at the prompt
+    before anything looks at the sink."""
+    with pytest.raises(ValueError, match="unknown output sink"):
+        check_sink("bogus:path")
+    with pytest.raises(ValueError, match="needs a descriptor number"):
+        check_sink("fd:not-a-number")
+
+
+def test_check_sink_accepts_the_three_forms_without_opening_anything(tmp_path):
+    """A file: FIFO must not be opened here: the open blocks until a reader
+    arrives, which would hang ahead of the prompt this precedes."""
+    fifo = tmp_path / "pipe"
+    os.mkfifo(fifo)
+    check_sink("stdout")
+    check_sink("fd:1")
+    check_sink(f"file:{fifo}")
+
+
+def test_a_terminal_that_fails_mid_prompt_is_an_error_not_a_traceback(
+    prompt_terminal, monkeypatch
+):
+    """main catches only ValueError, so an EIO on a hung-up terminal would
+    reach the user as a traceback. _read_line is the seam: patching os.read
+    itself would also break the pty responder that answers the prompt.
+    """
+
+    def failing_read(fd):
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr(secretio, "_read_line", failing_read)
+    # A responder is still needed: it drains the prompt from the pty, and the
+    # TCSAFLUSH restore in the finally blocks until that output has gone.
+    prompt_terminal.answer("unread")
+    with pytest.raises(ValueError, match="cannot read the key from"):
+        prompt_secret("key")

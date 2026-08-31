@@ -142,9 +142,11 @@ diagnostic to standard error, leaving standard output empty.
 
 A diagnostic is the one part of a failed run a user is likely to paste into a
 bug report, so no message the tool writes to standard error SHALL contain the
-key, the mnemonic, or any word of one. A rejected word SHALL be identified by
-its 1-based position instead. This holds on every exit path, including the
-errors the argument parser emits before a subcommand handler runs.
+key, the mnemonic, or any word of one. A rejected word or character SHALL be
+identified by its 1-based position instead, counted from the start of the key
+or mnemonic, so that every position a run reports shares one origin. This holds
+on every exit path, including the errors the argument parser emits before a
+subcommand handler runs.
 
 #### Scenario: A rejected word is named by its position
 

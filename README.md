@@ -36,7 +36,8 @@ there Enter submits, so a phrase pasted with its line breaks is read only as
 far as the first one. Use `--input file:` for a wrapped phrase.
 
 Errors name a bad word or character by its position rather than quoting it,
-counting from the start of the string as you gave it. No message echoes the
+counting from the start of the key itself, with surrounding whitespace
+trimmed. No message echoes the
 key or the phrase, so the diagnostics are safe to paste into a bug report. The
 one thing a message does repeat is the source you named — a path, a descriptor
 number, a variable name — so `--input env:` given the key itself in place of a
@@ -56,10 +57,13 @@ instead, using the same grammar as OpenSSL's `-passin`:
 | `--input stdin` | standard input | safe |
 | `--input env:VAR` | an environment variable | inherited by children |
 | `--input pass:VALUE` | the command line itself | leaks, as an argument does |
+| *(a bare argument)* | the command line itself | leaks |
 | *(omitted)* | the terminal, without echo | safe |
 
 `pass:` and a bare key argument are the same leaky channel; both are kept for
-compatibility and for scripts where it does not matter. `env:` is better than
+compatibility and for scripts where it does not matter. Because they are the
+same channel, giving both a bare argument and `--input` is an error — exit 2,
+not a rule about which one wins. `env:` is better than
 either — on Linux `/proc/PID/environ` is readable only by its owner — but the
 variable is still inherited by every child process.
 
@@ -100,6 +104,11 @@ is world-readable — so `mnemocode decode ... > keys.txt` leaves an age identit
 readable by every user on the machine. `--output file:` creates the file with
 mode `0600` instead, and refuses to overwrite an existing regular file rather
 than destroying a key you still have.
+
+If the write fails part-way — a full disk, a reader that went away — the file
+this run created is removed rather than left holding half a mnemonic, which
+would look like a whole one until the day you restored from it. A pipe or
+device that already existed is written to but never removed.
 
 Writing to a named pipe is allowed, and blocks until a reader opens the other
 end, as writing to a pipe always does. `file:/dev/stdout` works while standard

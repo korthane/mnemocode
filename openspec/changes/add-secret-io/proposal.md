@@ -45,7 +45,10 @@ README teaches the leaky form in every example.
 None. `key-formats` governs what the text of a key *is* — its encoding, letter
 case, and checksums — while this change governs where that text travels. Its
 existing scenarios describe invocations with no `--input` or `--output`, and
-they remain true unchanged on that default path. Its "Diagnostics never echo key
+they remain true unchanged on that default path. Two sentences of its prose
+name "the command line" and "standard output" as the only channels; this change
+rewords them to name the source and the sink, which adds and removes no
+behaviour and so needs no delta. Its "Diagnostics never echo key
 material" requirement is already written to hold on every exit path, so it
 governs the new sources without rewording.
 
