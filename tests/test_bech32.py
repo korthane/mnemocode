@@ -27,7 +27,14 @@ INVALID = [
     ),
     ("pzry9x0s0muk", "no separator character", "no '1' separator"),
     ("1pzry9x0s0muk", "empty HRP", "empty human-readable part"),
-    ("x1b4n0q5v", "invalid data character", "not a bech32 data character"),
+    # Position 3, not 1: counted from the start of the whole string. A
+    # one-character HRP catches an origin that happens to match the 15-character
+    # age prefix the CLI test uses.
+    (
+        "x1b4n0q5v",
+        "invalid data character",
+        "not a bech32 data character at position 3",
+    ),
     ("li1dgmt3", "too short checksum", "needs at least 6 for the checksum"),
     ("de1lg7wt\xff", "invalid character in checksum", "out of range"),
     (
